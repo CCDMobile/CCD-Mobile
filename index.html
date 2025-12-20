@@ -1,0 +1,3755 @@
+<!DOCTYPE html>
+<!--
+================================================================================
+CCD MOBILE INVENTORY MODULE v1.0.0
+================================================================================
+A lightweight, mobile-optimized inventory management tool.
+Designed to work from OneDrive on mobile devices.
+
+Features:
+- PIN-protected access
+- Search inventory by SKU, product name, or brand
+- View and edit channel allocations (Etsy, Wix, Wayfair, TreasureMarts)
+- Quick "Mark as Sold" functionality
+- Syncs with main inventory JSON file
+
+Usage:
+1. Export inventory JSON from main system
+2. Place this file and the JSON in OneDrive
+3. Open this file on your phone's browser
+4. Enter PIN to access
+5. Load your inventory JSON file
+
+================================================================================
+-->
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>CCD Mobile Inventory</title>
+    <style>
+        :root {
+            --primary: #4F46E5;
+            --primary-dark: #4338CA;
+            --success: #10B981;
+            --warning: #F59E0B;
+            --danger: #EF4444;
+            --bg: #F3F4F6;
+            --card-bg: #FFFFFF;
+            --text: #1F2937;
+            --text-light: #6B7280;
+            --border: #E5E7EB;
+            --shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        * {
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            margin: 0;
+            padding: 0;
+            min-height: 100vh;
+            font-size: 16px;
+        }
+
+        /* PIN Screen */
+        .pin-screen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .pin-screen.hidden {
+            display: none;
+        }
+
+        .pin-logo {
+            font-size: 48px;
+            margin-bottom: 20px;
+        }
+
+        .pin-title {
+            color: white;
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 30px;
+        }
+
+        .pin-input-container {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 30px;
+        }
+
+        .pin-dot {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.3);
+            transition: all 0.2s;
+        }
+
+        .pin-dot.filled {
+            background: white;
+            transform: scale(1.1);
+        }
+
+        .pin-dot.error {
+            background: #EF4444;
+            animation: shake 0.5s;
+        }
+
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-5px); }
+            75% { transform: translateX(5px); }
+        }
+
+        .pin-keypad {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+            max-width: 280px;
+        }
+
+        .pin-key {
+            width: 70px;
+            height: 70px;
+            border-radius: 50%;
+            border: 2px solid rgba(255,255,255,0.3);
+            background: rgba(255,255,255,0.1);
+            color: white;
+            font-size: 28px;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .pin-key:active {
+            background: rgba(255,255,255,0.3);
+            transform: scale(0.95);
+        }
+
+        .pin-key.empty {
+            visibility: hidden;
+        }
+
+        .pin-key.backspace {
+            font-size: 24px;
+        }
+
+        .pin-error-msg {
+            color: #FCA5A5;
+            margin-top: 20px;
+            font-size: 14px;
+            height: 20px;
+        }
+
+        /* Main App */
+        .app-container {
+            display: none;
+            flex-direction: column;
+            min-height: 100vh;
+        }
+
+        .app-container.active {
+            display: flex;
+        }
+
+        /* Header */
+        .header {
+            background: linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%);
+            color: white;
+            padding: 15px 20px;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: var(--shadow);
+        }
+
+        .header-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .header-title {
+            font-size: 20px;
+            font-weight: 600;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        .header-btn {
+            background: rgba(255,255,255,0.2);
+            border: none;
+            color: white;
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
+            font-size: 18px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .header-btn:active {
+            background: rgba(255,255,255,0.3);
+        }
+
+        /* Search */
+        .search-container {
+            position: relative;
+        }
+
+        .search-input {
+            width: 100%;
+            padding: 12px 15px 12px 45px;
+            border: none;
+            border-radius: 12px;
+            font-size: 16px;
+            background: rgba(255,255,255,0.95);
+            color: var(--text);
+        }
+
+        .search-input::placeholder {
+            color: var(--text-light);
+        }
+
+        .search-icon {
+            position: absolute;
+            left: 15px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--text-light);
+            font-size: 18px;
+        }
+
+        .search-clear {
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: var(--text-light);
+            color: white;
+            border: none;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            font-size: 14px;
+            cursor: pointer;
+            display: none;
+        }
+
+        .search-clear.visible {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* Stats Bar */
+        .stats-bar {
+            display: flex;
+            justify-content: space-around;
+            padding: 15px 20px;
+            background: var(--card-bg);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .stat-item {
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--primary);
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: var(--text-light);
+            text-transform: uppercase;
+        }
+
+        /* Filter Tabs */
+        .filter-tabs {
+            display: flex;
+            padding: 10px 15px;
+            gap: 8px;
+            overflow-x: auto;
+            background: var(--card-bg);
+            border-bottom: 1px solid var(--border);
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .filter-tab {
+            padding: 8px 16px;
+            border-radius: 20px;
+            border: 1px solid var(--border);
+            background: white;
+            font-size: 14px;
+            white-space: nowrap;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .filter-tab.active {
+            background: var(--primary);
+            color: white;
+            border-color: var(--primary);
+        }
+
+        .filter-tab.report-tab {
+            background: #10B981;
+            color: white;
+            border-color: #10B981;
+        }
+
+        /* Shelf Filter Bar */
+        .shelf-filter-bar {
+            display: none;
+            padding: 10px 15px;
+            background: var(--card-bg);
+            border-bottom: 1px solid var(--border);
+            gap: 10px;
+            align-items: center;
+        }
+
+        .shelf-filter-bar.visible {
+            display: flex;
+        }
+
+        .shelf-input {
+            flex: 1;
+            padding: 10px 15px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            font-size: 16px;
+        }
+
+        .shelf-clear-btn {
+            padding: 10px 15px;
+            background: var(--text-light);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+
+        /* Sync Status Indicator */
+        .sync-status {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 11px;
+            padding: 4px 10px;
+            border-radius: 10px;
+            background: rgba(255,255,255,0.2);
+        }
+
+        .sync-status.synced {
+            color: #10B981;
+        }
+
+        .sync-status.warning {
+            background: var(--warning);
+            color: white;
+        }
+
+        .sync-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: currentColor;
+        }
+
+        /* TM Report View */
+        .tm-report {
+            padding: 15px;
+        }
+
+        .tm-report-header {
+            background: linear-gradient(135deg, #10B981 0%, #059669 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 16px;
+            margin-bottom: 15px;
+        }
+
+        .tm-report-title {
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+
+        .tm-report-week {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+
+        .tm-report-stats {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+            flex-wrap: wrap;
+        }
+
+        .tm-stat {
+            background: rgba(255,255,255,0.2);
+            padding: 10px 12px;
+            border-radius: 10px;
+            text-align: center;
+            min-width: 60px;
+        }
+
+        .tm-stat-value {
+            font-size: 20px;
+            font-weight: 700;
+        }
+
+        .tm-stat-label {
+            font-size: 10px;
+            opacity: 0.9;
+        }
+
+        .tm-stat.warning {
+            background: rgba(245, 158, 11, 0.8);
+        }
+
+        .tm-stat.danger {
+            background: rgba(239, 68, 68, 0.8);
+        }
+
+        .tm-report-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        .tm-report-btn {
+            flex: 1;
+            padding: 10px;
+            border: none;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            background: rgba(255,255,255,0.2);
+            color: white;
+        }
+
+        .tm-item-card {
+            background: var(--card-bg);
+            border-radius: 12px;
+            padding: 15px;
+            margin-bottom: 10px;
+            box-shadow: var(--shadow);
+        }
+
+        .tm-item-card.new-item {
+            background: linear-gradient(135deg, #D1FAE5 0%, #A7F3D0 100%);
+            border-left: 4px solid #10B981;
+        }
+
+        .tm-item-card.not-found {
+            background: linear-gradient(135deg, #FEE2E2 0%, #FECACA 100%);
+            border-left: 4px solid #EF4444;
+            opacity: 0.8;
+        }
+
+        .tm-item-card.mismatch {
+            background: linear-gradient(135deg, #FEF3C7 0%, #FDE68A 100%);
+            border-left: 4px solid #F59E0B;
+        }
+
+        .tm-item-card.verified {
+            border-left: 4px solid #3B82F6;
+        }
+
+        .tm-item-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+        }
+
+        .tm-item-info {
+            flex: 1;
+        }
+
+        .tm-item-brand {
+            font-size: 12px;
+            color: var(--text-light);
+            margin-bottom: 2px;
+        }
+
+        .tm-item-name {
+            font-weight: 600;
+            font-size: 15px;
+            margin-bottom: 4px;
+        }
+
+        .tm-item-meta {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .tm-item-sku {
+            font-family: monospace;
+            font-size: 12px;
+            color: var(--text-light);
+        }
+
+        .tm-item-shelf {
+            font-size: 12px;
+            color: var(--primary);
+            background: rgba(79, 70, 229, 0.1);
+            padding: 2px 8px;
+            border-radius: 4px;
+        }
+
+        .tm-item-right {
+            text-align: right;
+            min-width: 80px;
+        }
+
+        .tm-item-qty {
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--primary);
+        }
+
+        .tm-item-qty.mismatch {
+            color: var(--warning);
+            text-decoration: line-through;
+        }
+
+        .tm-item-actual {
+            font-size: 14px;
+            color: var(--success);
+            font-weight: 600;
+        }
+
+        .tm-item-price {
+            font-size: 14px;
+            color: var(--success);
+            font-weight: 600;
+        }
+
+        .tm-item-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 12px;
+            flex-wrap: wrap;
+        }
+
+        .tm-action-btn {
+            padding: 10px 14px;
+            border-radius: 8px;
+            border: none;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .tm-action-btn.verify {
+            background: var(--success);
+            color: white;
+        }
+
+        .tm-action-btn.verify.done {
+            background: #3B82F6;
+        }
+
+        .tm-action-btn.count {
+            background: var(--primary);
+            color: white;
+        }
+
+        .tm-action-btn.not-found {
+            background: var(--danger);
+            color: white;
+        }
+
+        .tm-action-btn.not-found.active {
+            background: #991B1B;
+        }
+
+        .tm-action-btn.sold {
+            background: #F59E0B;
+            color: white;
+        }
+
+        .tm-new-badge {
+            display: inline-block;
+            background: #10B981;
+            color: white;
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 4px;
+            margin-left: 8px;
+        }
+
+        .tm-verified-badge {
+            display: inline-block;
+            background: #3B82F6;
+            color: white;
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 4px;
+            margin-left: 8px;
+        }
+
+        .tm-mismatch-badge {
+            display: inline-block;
+            background: #F59E0B;
+            color: white;
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 4px;
+            margin-left: 8px;
+        }
+
+        .tm-notfound-badge {
+            display: inline-block;
+            background: #EF4444;
+            color: white;
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 4px;
+            margin-left: 8px;
+        }
+
+        .tm-back-btn {
+            display: block;
+            width: 100%;
+            padding: 14px;
+            background: var(--bg);
+            border: none;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text);
+            cursor: pointer;
+            margin-top: 20px;
+        }
+
+        /* Count Modal */
+        .count-modal-content {
+            padding: 20px;
+            text-align: center;
+        }
+
+        .count-item-name {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+
+        .count-item-sku {
+            font-size: 14px;
+            color: var(--text-light);
+            margin-bottom: 20px;
+        }
+
+        .count-current {
+            font-size: 14px;
+            color: var(--text-light);
+            margin-bottom: 10px;
+        }
+
+        .count-input-section {
+            margin-bottom: 20px;
+        }
+
+        .count-label {
+            font-size: 14px;
+            color: var(--text-light);
+            margin-bottom: 10px;
+        }
+
+        .count-controls {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 20px;
+        }
+
+        .count-value {
+            font-size: 48px;
+            font-weight: 700;
+            min-width: 80px;
+            color: var(--primary);
+        }
+
+        .count-value.mismatch {
+            color: var(--warning);
+        }
+
+        .count-mismatch-warning {
+            background: #FEF3C7;
+            color: #92400E;
+            padding: 12px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+
+        /* Item Details Grid */
+        .item-details-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 15px;
+            padding: 12px;
+            background: var(--bg);
+            border-radius: 12px;
+        }
+
+        .item-detail {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .item-detail-label {
+            font-size: 11px;
+            color: var(--text-light);
+            margin-bottom: 2px;
+        }
+
+        .item-detail-value {
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .item-detail-value.highlight {
+            color: var(--primary);
+        }
+
+        .item-detail.full-width {
+            grid-column: span 2;
+        }
+
+        /* Item List */
+        .item-list {
+            flex: 1;
+            padding: 15px;
+            overflow-y: auto;
+        }
+
+        .item-card {
+            background: var(--card-bg);
+            border-radius: 16px;
+            padding: 15px;
+            margin-bottom: 12px;
+            box-shadow: var(--shadow);
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        .item-card:active {
+            transform: scale(0.98);
+        }
+
+        .item-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 10px;
+        }
+
+        .item-name {
+            font-weight: 600;
+            font-size: 16px;
+            flex: 1;
+            margin-right: 10px;
+        }
+
+        .item-qty {
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--primary);
+            min-width: 50px;
+            text-align: right;
+        }
+
+        .item-qty.low {
+            color: var(--danger);
+        }
+
+        .item-meta {
+            display: flex;
+            gap: 15px;
+            font-size: 13px;
+            color: var(--text-light);
+            margin-bottom: 10px;
+        }
+
+        .item-sku {
+            font-family: monospace;
+            background: var(--bg);
+            padding: 2px 8px;
+            border-radius: 4px;
+        }
+
+        .item-channels {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .channel-badge {
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .channel-badge.etsy {
+            background: #F97316;
+            color: white;
+        }
+
+        .channel-badge.wix {
+            background: #0EA5E9;
+            color: white;
+        }
+
+        .channel-badge.wayfair {
+            background: #8B5CF6;
+            color: white;
+        }
+
+        .channel-badge.treasuremarts {
+            background: #10B981;
+            color: white;
+        }
+
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-light);
+        }
+
+        .empty-state-icon {
+            font-size: 64px;
+            margin-bottom: 20px;
+        }
+
+        .empty-state-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 10px;
+            color: var(--text);
+        }
+
+        /* Item Detail Modal */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            display: none;
+            align-items: flex-end;
+            z-index: 200;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: var(--card-bg);
+            border-radius: 24px 24px 0 0;
+            width: 100%;
+            max-height: 90vh;
+            overflow-y: auto;
+            animation: slideUp 0.3s ease;
+        }
+
+        @keyframes slideUp {
+            from { transform: translateY(100%); }
+            to { transform: translateY(0); }
+        }
+
+        .modal-header {
+            padding: 20px;
+            border-bottom: 1px solid var(--border);
+            position: sticky;
+            top: 0;
+            background: var(--card-bg);
+            border-radius: 24px 24px 0 0;
+        }
+
+        .modal-handle {
+            width: 40px;
+            height: 4px;
+            background: var(--border);
+            border-radius: 2px;
+            margin: 0 auto 15px;
+        }
+
+        .modal-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin: 0;
+        }
+
+        .modal-subtitle {
+            font-size: 14px;
+            color: var(--text-light);
+            margin-top: 5px;
+        }
+
+        .modal-body {
+            padding: 20px;
+        }
+
+        .modal-section {
+            margin-bottom: 25px;
+        }
+
+        .modal-section-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-light);
+            text-transform: uppercase;
+            margin-bottom: 12px;
+        }
+
+        /* Channel Allocation Editor */
+        .channel-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .channel-row:last-child {
+            border-bottom: none;
+        }
+
+        .channel-name {
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .channel-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            color: white;
+        }
+
+        .channel-icon.etsy { background: #F97316; }
+        .channel-icon.wix { background: #0EA5E9; }
+        .channel-icon.wayfair { background: #8B5CF6; }
+        .channel-icon.treasuremarts { background: #10B981; }
+
+        .channel-controls {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .qty-btn {
+            width: 44px;
+            height: 44px;
+            border-radius: 12px;
+            border: 2px solid var(--border);
+            background: white;
+            font-size: 24px;
+            font-weight: 500;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text);
+            transition: all 0.2s;
+        }
+
+        .qty-btn:active {
+            background: var(--bg);
+            transform: scale(0.95);
+        }
+
+        .qty-btn.minus { color: var(--danger); border-color: var(--danger); }
+        .qty-btn.plus { color: var(--success); border-color: var(--success); }
+
+        .qty-value {
+            font-size: 24px;
+            font-weight: 700;
+            min-width: 50px;
+            text-align: center;
+        }
+
+        /* Quick Actions */
+        .quick-actions {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            padding: 20px;
+            border-top: 1px solid var(--border);
+        }
+
+        .action-btn {
+            padding: 16px;
+            border-radius: 12px;
+            border: none;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            transition: all 0.2s;
+        }
+
+        .action-btn:active {
+            transform: scale(0.98);
+        }
+
+        .action-btn.primary {
+            background: var(--primary);
+            color: white;
+        }
+
+        .action-btn.success {
+            background: var(--success);
+            color: white;
+        }
+
+        .action-btn.danger {
+            background: var(--danger);
+            color: white;
+        }
+
+        .action-btn.secondary {
+            background: var(--bg);
+            color: var(--text);
+        }
+
+        /* Load File Section */
+        .load-section {
+            padding: 20px;
+        }
+
+        .load-card {
+            background: var(--card-bg);
+            border-radius: 16px;
+            padding: 30px 20px;
+            text-align: center;
+            box-shadow: var(--shadow);
+        }
+
+        .load-icon {
+            font-size: 48px;
+            margin-bottom: 15px;
+        }
+
+        .load-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 10px;
+        }
+
+        .load-desc {
+            font-size: 14px;
+            color: var(--text-light);
+            margin-bottom: 20px;
+        }
+
+        .load-btn {
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 14px 28px;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            width: 100%;
+        }
+
+        .load-btn:active {
+            background: var(--primary-dark);
+        }
+
+        #fileInput {
+            display: none;
+        }
+
+        /* Toast Notification */
+        .toast {
+            position: fixed;
+            bottom: 100px;
+            left: 50%;
+            transform: translateX(-50%) translateY(100px);
+            background: #1F2937;
+            color: white;
+            padding: 14px 24px;
+            border-radius: 12px;
+            font-size: 14px;
+            font-weight: 500;
+            z-index: 300;
+            opacity: 0;
+            transition: all 0.3s;
+            white-space: nowrap;
+        }
+
+        .toast.show {
+            transform: translateX(-50%) translateY(0);
+            opacity: 1;
+        }
+
+        .toast.success { background: var(--success); }
+        .toast.error { background: var(--danger); }
+
+        /* Mark Sold Modal */
+        .sold-modal {
+            padding: 20px;
+        }
+
+        .sold-channel-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+
+        .sold-channel-btn {
+            padding: 20px;
+            border-radius: 12px;
+            border: 2px solid var(--border);
+            background: white;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.2s;
+        }
+
+        .sold-channel-btn:active {
+            transform: scale(0.98);
+        }
+
+        .sold-channel-btn.selected {
+            border-color: var(--primary);
+            background: rgba(79, 70, 229, 0.1);
+        }
+
+        .sold-channel-btn .icon {
+            font-size: 28px;
+        }
+
+        .sold-qty-section {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .sold-qty-label {
+            font-size: 14px;
+            color: var(--text-light);
+            margin-bottom: 10px;
+        }
+
+        .sold-qty-controls {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 20px;
+        }
+
+        .sold-qty-value {
+            font-size: 48px;
+            font-weight: 700;
+            min-width: 80px;
+        }
+
+        /* Sale Fields */
+        .sale-field {
+            margin-bottom: 15px;
+        }
+
+        .sale-field-label {
+            display: block;
+            font-size: 14px;
+            color: var(--text-light);
+            margin-bottom: 6px;
+        }
+
+        .sale-field-input {
+            width: 100%;
+            padding: 12px 15px;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            font-size: 16px;
+            background: white;
+        }
+
+        .price-input-wrapper {
+            position: relative;
+            display: flex;
+            align-items: center;
+        }
+
+        .price-prefix {
+            position: absolute;
+            left: 15px;
+            color: var(--text-light);
+            font-size: 16px;
+        }
+
+        .price-input {
+            padding-left: 30px;
+        }
+
+        .profit-preview {
+            background: var(--bg);
+            border-radius: 12px;
+            padding: 15px;
+            margin-top: 15px;
+        }
+
+        .profit-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 6px 0;
+            font-size: 14px;
+        }
+
+        .profit-row.profit-total {
+            border-top: 1px solid var(--border);
+            margin-top: 8px;
+            padding-top: 12px;
+            font-weight: 600;
+            font-size: 16px;
+        }
+
+        .profit-positive { color: var(--success); }
+        .profit-negative { color: var(--danger); }
+
+        /* Settings Modal */
+        .settings-section {
+            margin-bottom: 25px;
+        }
+
+        .settings-label {
+            font-size: 14px;
+            color: var(--text-light);
+            margin-bottom: 8px;
+        }
+
+        .settings-input {
+            width: 100%;
+            padding: 12px 15px;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            font-size: 16px;
+        }
+
+        .settings-btn {
+            width: 100%;
+            padding: 14px;
+            border-radius: 12px;
+            border: none;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-bottom: 10px;
+        }
+
+        .settings-btn.danger {
+            background: rgba(239, 68, 68, 0.1);
+            color: var(--danger);
+        }
+
+        /* Unsaved Changes Indicator */
+        .unsaved-badge {
+            display: none;
+            background: var(--warning);
+            color: white;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .unsaved-badge.visible {
+            display: inline-block;
+        }
+
+        /* Auto-save Indicator */
+        .auto-save-indicator {
+            font-size: 11px;
+            padding: 4px 8px;
+            border-radius: 10px;
+            background: rgba(255,255,255,0.2);
+            color: rgba(255,255,255,0.8);
+        }
+
+        .auto-save-indicator.active {
+            background: var(--success);
+            color: white;
+        }
+
+        /* Total Qty Display */
+        .total-qty-section {
+            background: var(--bg);
+            border-radius: 12px;
+            padding: 15px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .total-qty-label {
+            font-size: 14px;
+            color: var(--text-light);
+            margin-bottom: 5px;
+        }
+
+        .total-qty-value {
+            font-size: 36px;
+            font-weight: 700;
+            color: var(--primary);
+            cursor: pointer;
+        }
+        
+        .total-qty-value:active {
+            opacity: 0.7;
+        }
+        
+        .total-qty-hint {
+            font-size: 11px;
+            color: var(--text-light);
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <!-- PIN Screen -->
+    <div class="pin-screen" id="pinScreen">
+        <div class="pin-logo">📦</div>
+        <div class="pin-title">CCD Mobile Inventory</div>
+        <div class="pin-input-container" id="pinDots">
+            <div class="pin-dot"></div>
+            <div class="pin-dot"></div>
+            <div class="pin-dot"></div>
+            <div class="pin-dot"></div>
+        </div>
+        <div class="pin-keypad">
+            <button class="pin-key" onclick="enterPin('1')">1</button>
+            <button class="pin-key" onclick="enterPin('2')">2</button>
+            <button class="pin-key" onclick="enterPin('3')">3</button>
+            <button class="pin-key" onclick="enterPin('4')">4</button>
+            <button class="pin-key" onclick="enterPin('5')">5</button>
+            <button class="pin-key" onclick="enterPin('6')">6</button>
+            <button class="pin-key" onclick="enterPin('7')">7</button>
+            <button class="pin-key" onclick="enterPin('8')">8</button>
+            <button class="pin-key" onclick="enterPin('9')">9</button>
+            <button class="pin-key empty"></button>
+            <button class="pin-key" onclick="enterPin('0')">0</button>
+            <button class="pin-key backspace" onclick="backspacePin()">⌫</button>
+        </div>
+        <div class="pin-error-msg" id="pinError"></div>
+    </div>
+
+    <!-- Main App -->
+    <div class="app-container" id="appContainer">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-top">
+                <div class="header-title">📦 CCD Inventory</div>
+                <div class="header-actions">
+                    <span class="auto-save-indicator" id="autoSaveIndicator">💾 Manual save</span>
+                    <span class="unsaved-badge" id="unsavedBadge">Unsaved</span>
+                    <button class="header-btn" onclick="showSettings()" title="Settings">⚙️</button>
+                    <button class="header-btn" onclick="saveChanges()" title="Save">💾</button>
+                </div>
+            </div>
+            <div class="search-container">
+                <span class="search-icon">🔍</span>
+                <input type="text" class="search-input" id="searchInput" placeholder="Search SKU, product, or brand..." oninput="handleSearch()">
+                <button class="search-clear" id="searchClear" onclick="clearSearch()">✕</button>
+            </div>
+        </header>
+
+        <!-- Stats Bar -->
+        <div class="stats-bar" id="statsBar">
+            <div class="stat-item">
+                <div class="stat-value" id="statItems">-</div>
+                <div class="stat-label">Items</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="statQty">-</div>
+                <div class="stat-label">Total Qty</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="statLow">-</div>
+                <div class="stat-label">Low Stock</div>
+            </div>
+        </div>
+        
+        <!-- Hidden file input (always present) -->
+        <input type="file" id="fileInput" accept=".json" onchange="loadFile(event)" style="display: none;">
+
+        <!-- Filter Tabs -->
+        <div class="filter-tabs" id="filterTabs">
+            <button class="filter-tab active" data-filter="all" onclick="setFilter('all')">All</button>
+            <button class="filter-tab" data-filter="etsy" onclick="setFilter('etsy')">🏪 Etsy</button>
+            <button class="filter-tab" data-filter="wix" onclick="setFilter('wix')">🌐 Wix</button>
+            <button class="filter-tab" data-filter="wayfair" onclick="setFilter('wayfair')">🛋️ Wayfair</button>
+            <button class="filter-tab" data-filter="treasuremarts" onclick="setFilter('treasuremarts')">💎 TM</button>
+            <button class="filter-tab" data-filter="low" onclick="setFilter('low')">⚠️ Low</button>
+            <button class="filter-tab" data-filter="shelf" onclick="showShelfFilter()">📍 Shelf</button>
+            <button class="filter-tab report-tab" data-filter="tmreport" onclick="showTMReport()">📋 TM Report</button>
+        </div>
+        
+        <!-- Shelf Filter Bar (hidden by default) -->
+        <div class="shelf-filter-bar" id="shelfFilterBar">
+            <input type="text" class="shelf-input" id="shelfInput" placeholder="Enter shelf # (e.g., A1, B2)" oninput="filterByShelf()">
+            <button class="shelf-clear-btn" onclick="clearShelfFilter()">✕ Clear</button>
+        </div>
+
+        <!-- Item List -->
+        <div class="item-list" id="itemList">
+            <!-- Load File Prompt -->
+            <div class="load-section" id="loadSection">
+                <div class="load-card">
+                    <div class="load-icon">📂</div>
+                    <div class="load-title">Load Inventory</div>
+                    <div class="load-desc">Select your exported inventory JSON file from OneDrive to get started.</div>
+                    <button class="load-btn" onclick="loadFileWithHandle()">
+                        Select JSON File
+                    </button>
+                    <p style="font-size: 12px; color: var(--text-light); margin-top: 15px;">
+                        💡 Using Chrome/Edge? Changes will auto-save back to the file!
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Item Detail Modal -->
+    <div class="modal-overlay" id="itemModal" onclick="closeModalOutside(event)">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <div class="modal-handle"></div>
+                <h2 class="modal-title" id="modalTitle">Item Name</h2>
+                <div class="modal-subtitle" id="modalSubtitle">SKU: 12345 | Brand</div>
+            </div>
+            <div class="modal-body">
+                <!-- Item Details -->
+                <div class="item-details-grid" id="itemDetailsGrid">
+                    <!-- Details will be inserted here -->
+                </div>
+
+                <!-- Total Quantity -->
+                <div class="total-qty-section">
+                    <div class="total-qty-label">Total Quantity</div>
+                    <div class="total-qty-value" id="modalTotalQty">0</div>
+                    <div class="total-qty-hint">Tap to edit</div>
+                </div>
+
+                <!-- Channel Allocations -->
+                <div class="modal-section">
+                    <div class="modal-section-title">Channel Allocations</div>
+                    <div id="channelEditor">
+                        <!-- Channel rows will be inserted here -->
+                    </div>
+                </div>
+            </div>
+            <div class="quick-actions">
+                <button class="action-btn secondary" onclick="closeModal()">Close</button>
+                <button class="action-btn success" onclick="showMarkSold()">🏷️ Mark Sold</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Mark Sold Modal -->
+    <div class="modal-overlay" id="soldModal" onclick="closeSoldModalOutside(event)">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <div class="modal-handle"></div>
+                <h2 class="modal-title">Record Sale</h2>
+                <div class="modal-subtitle" id="soldItemName">Item Name</div>
+            </div>
+            <div class="modal-body sold-modal">
+                <div class="modal-section-title">Select Channel</div>
+                <div class="sold-channel-grid" id="soldChannelGrid">
+                    <!-- Channel buttons will be inserted here -->
+                </div>
+                
+                <div class="sold-qty-section">
+                    <div class="sold-qty-label">Quantity Sold</div>
+                    <div class="sold-qty-controls">
+                        <button class="qty-btn minus" onclick="adjustSoldQty(-1)">−</button>
+                        <div class="sold-qty-value" id="soldQtyValue">1</div>
+                        <button class="qty-btn plus" onclick="adjustSoldQty(1)">+</button>
+                    </div>
+                </div>
+
+                <!-- Sale Date -->
+                <div class="sale-field">
+                    <label class="sale-field-label">Sale Date</label>
+                    <input type="date" class="sale-field-input" id="saleDateInput">
+                </div>
+
+                <!-- Sale Price -->
+                <div class="sale-field">
+                    <label class="sale-field-label">Sale Price (per item)</label>
+                    <div class="price-input-wrapper">
+                        <span class="price-prefix">$</span>
+                        <input type="number" class="sale-field-input price-input" id="salePriceInput" 
+                               step="0.01" min="0" placeholder="0.00" inputmode="decimal">
+                    </div>
+                </div>
+
+                <!-- Profit Preview -->
+                <div class="profit-preview" id="profitPreview">
+                    <div class="profit-row">
+                        <span>Total Revenue:</span>
+                        <span id="previewRevenue">$0.00</span>
+                    </div>
+                    <div class="profit-row">
+                        <span>Total Cost:</span>
+                        <span id="previewCost">$0.00</span>
+                    </div>
+                    <div class="profit-row profit-total">
+                        <span>Est. Profit:</span>
+                        <span id="previewProfit">$0.00</span>
+                    </div>
+                </div>
+            </div>
+            <div class="quick-actions">
+                <button class="action-btn secondary" onclick="closeSoldModal()">Cancel</button>
+                <button class="action-btn danger" onclick="confirmSold()">💰 Record Sale</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div class="modal-overlay" id="settingsModal" onclick="closeSettingsOutside(event)">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <div class="modal-handle"></div>
+                <h2 class="modal-title">Settings</h2>
+            </div>
+            <div class="modal-body">
+                <div class="settings-section">
+                    <div class="settings-label">File Connection</div>
+                    <p style="font-size: 14px; color: var(--text-light); margin-bottom: 10px;" id="fileConnectionStatus">
+                        Not connected to a file. Changes save to browser only.
+                    </p>
+                    <button class="settings-btn" onclick="loadFileWithHandle(); closeSettings();">📂 Connect to JSON File (Auto-save)</button>
+                    <button class="settings-btn" onclick="document.getElementById('fileInput').click(); closeSettings();">📄 Load File (Manual save)</button>
+                    <button class="settings-btn" onclick="exportChanges()">📥 Export Changes</button>
+                </div>
+
+                <div class="settings-section">
+                    <div class="settings-label">Change PIN</div>
+                    <input type="password" class="settings-input" id="newPinInput" placeholder="Enter new 4-digit PIN" maxlength="4" inputmode="numeric">
+                    <button class="action-btn primary" style="margin-top: 10px; width: 100%;" onclick="changePin()">Update PIN</button>
+                </div>
+                
+                <div class="settings-section">
+                    <div class="settings-label">Data Management</div>
+                    <button class="settings-btn danger" onclick="confirmClearData()">🗑️ Clear Local Data</button>
+                    <button class="settings-btn" onclick="clearTMVerifications()">🔄 Reset TM Verifications</button>
+                </div>
+
+                <div class="settings-section">
+                    <div class="settings-label">About</div>
+                    <p style="font-size: 14px; color: var(--text-light);">
+                        CCD Mobile Inventory v1.1.0<br>
+                        Last loaded: <span id="lastLoadedDate">Never</span>
+                    </p>
+                </div>
+            </div>
+            <div class="quick-actions">
+                <button class="action-btn secondary" onclick="closeSettings()" style="grid-column: span 2;">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Count Modal (for quantity verification) -->
+    <div class="modal-overlay" id="countModal" onclick="closeCountModalOutside(event)">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <div class="modal-handle"></div>
+                <h2 class="modal-title">Verify Count</h2>
+            </div>
+            <div class="modal-body count-modal-content">
+                <div class="count-item-name" id="countItemName">Item Name</div>
+                <div class="count-item-sku" id="countItemSku">SKU: 12345</div>
+                <div class="count-current" id="countCurrent">System Qty: 5</div>
+                
+                <div class="count-input-section">
+                    <div class="count-label">Actual Count</div>
+                    <div class="count-controls">
+                        <button class="qty-btn minus" onclick="adjustCount(-1)">−</button>
+                        <div class="count-value" id="countValue">0</div>
+                        <button class="qty-btn plus" onclick="adjustCount(1)">+</button>
+                    </div>
+                </div>
+                
+                <div class="count-mismatch-warning" id="countMismatchWarning" style="display: none;">
+                    ⚠️ Count differs from system! This will be flagged for review.
+                </div>
+            </div>
+            <div class="quick-actions">
+                <button class="action-btn secondary" onclick="closeCountModal()">Cancel</button>
+                <button class="action-btn success" onclick="confirmCount()">✓ Confirm Count</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Sync Warning Modal -->
+    <div class="modal-overlay" id="syncWarningModal" onclick="closeSyncWarningOutside(event)">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <div class="modal-handle"></div>
+                <h2 class="modal-title">⚠️ Sync Conflict</h2>
+            </div>
+            <div class="modal-body">
+                <p style="margin-bottom: 15px;">The inventory file has been modified since you last loaded it. This could mean someone else made changes.</p>
+                <p style="margin-bottom: 20px; color: var(--text-light); font-size: 14px;">
+                    <strong>Your version:</strong> <span id="syncYourTime">--</span><br>
+                    <strong>File version:</strong> <span id="syncFileTime">--</span>
+                </p>
+            </div>
+            <div class="quick-actions">
+                <button class="action-btn secondary" onclick="closeSyncWarning()">Keep My Changes</button>
+                <button class="action-btn primary" onclick="reloadFromFile()">Load New Version</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast -->
+    <div class="toast" id="toast"></div>
+
+    <script>
+        // ============================================================================
+        // STATE
+        // ============================================================================
+        
+        let inventory = [];
+        let salesHistory = [];
+        let filteredInventory = [];
+        let currentFilter = 'all';
+        let searchQuery = '';
+        let selectedItem = null;
+        let soldChannel = null;
+        let soldQty = 1;
+        let hasUnsavedChanges = false;
+        let pinCode = localStorage.getItem('ccd_mobile_pin') || '1234';
+        let enteredPin = '';
+        
+        // File System Access API
+        let fileHandle = null;
+        let autoSaveEnabled = false;
+        
+        // TM Report state
+        let tmReportVisible = false;
+        let verifiedItems = {}; // Track verified items: {id: {verified: true, actualQty: number, mismatch: boolean}}
+        let notFoundItems = {}; // Track not found items by ID
+        let tmReportWeek = ''; // Track which week the verification is for
+        
+        const CHANNELS = ['etsy', 'wix', 'wayfair', 'treasuremarts'];
+        const CHANNEL_NAMES = {
+            etsy: 'Etsy',
+            wix: 'Wix',
+            wayfair: 'Wayfair',
+            treasuremarts: 'TreasureMarts'
+        };
+        const CHANNEL_ICONS = {
+            etsy: '🏪',
+            wix: '🌐',
+            wayfair: '🛋️',
+            treasuremarts: '💎'
+        };
+
+        // ============================================================================
+        // PIN AUTHENTICATION
+        // ============================================================================
+        
+        function enterPin(digit) {
+            if (enteredPin.length >= 4) return;
+            
+            enteredPin += digit;
+            updatePinDots();
+            
+            if (enteredPin.length === 4) {
+                setTimeout(validatePin, 200);
+            }
+        }
+        
+        function backspacePin() {
+            enteredPin = enteredPin.slice(0, -1);
+            updatePinDots();
+        }
+        
+        function updatePinDots() {
+            const dots = document.querySelectorAll('.pin-dot');
+            dots.forEach((dot, i) => {
+                dot.classList.remove('filled', 'error');
+                if (i < enteredPin.length) {
+                    dot.classList.add('filled');
+                }
+            });
+        }
+        
+        function validatePin() {
+            if (enteredPin === pinCode) {
+                document.getElementById('pinScreen').classList.add('hidden');
+                document.getElementById('appContainer').classList.add('active');
+                loadFromStorage();
+            } else {
+                const dots = document.querySelectorAll('.pin-dot');
+                dots.forEach(dot => dot.classList.add('error'));
+                document.getElementById('pinError').textContent = 'Incorrect PIN';
+                
+                setTimeout(() => {
+                    enteredPin = '';
+                    updatePinDots();
+                    document.getElementById('pinError').textContent = '';
+                }, 1000);
+            }
+        }
+        
+        function changePin() {
+            const newPin = document.getElementById('newPinInput').value;
+            if (newPin.length !== 4 || !/^\d+$/.test(newPin)) {
+                showToast('PIN must be 4 digits', 'error');
+                return;
+            }
+            
+            pinCode = newPin;
+            localStorage.setItem('ccd_mobile_pin', pinCode);
+            document.getElementById('newPinInput').value = '';
+            showToast('PIN updated successfully', 'success');
+        }
+
+        // ============================================================================
+        // FILE LOADING WITH FILE SYSTEM ACCESS API
+        // ============================================================================
+        
+        async function loadFileWithHandle() {
+            try {
+                // Check if File System Access API is supported
+                if (!('showOpenFilePicker' in window)) {
+                    // Fall back to traditional file input
+                    const fileInput = document.getElementById('fileInput');
+                    if (fileInput) {
+                        fileInput.click();
+                    } else {
+                        // Create a temporary file input if it doesn't exist
+                        const tempInput = document.createElement('input');
+                        tempInput.type = 'file';
+                        tempInput.accept = '.json';
+                        tempInput.onchange = loadFile;
+                        tempInput.click();
+                    }
+                    return;
+                }
+                
+                const [handle] = await window.showOpenFilePicker({
+                    types: [{
+                        description: 'JSON Files',
+                        accept: { 'application/json': ['.json'] }
+                    }],
+                    multiple: false
+                });
+                
+                fileHandle = handle;
+                autoSaveEnabled = true;
+                
+                const file = await handle.getFile();
+                lastFileModified = file.lastModified;
+                const contents = await file.text();
+                
+                parseAndLoadInventory(contents, file.name);
+                
+                showToast('Auto-save enabled! Changes save automatically.', 'success');
+                updateAutoSaveIndicator();
+                
+            } catch (err) {
+                if (err.name !== 'AbortError') {
+                    console.error('Error opening file:', err);
+                    // Try fallback for any error
+                    const fileInput = document.getElementById('fileInput');
+                    if (fileInput) {
+                        fileInput.click();
+                    } else {
+                        showToast('Error opening file: ' + err.message, 'error');
+                    }
+                }
+            }
+        }
+        
+        function loadFile(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            // Traditional file input - no auto-save
+            fileHandle = null;
+            autoSaveEnabled = false;
+            
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                parseAndLoadInventory(e.target.result, file.name);
+                updateAutoSaveIndicator();
+            };
+            reader.readAsText(file);
+        }
+        
+        function parseAndLoadInventory(contents, filename) {
+            try {
+                const data = JSON.parse(contents);
+                
+                // Handle both formats: {inventory: [...]} or direct array
+                if (data.inventory && Array.isArray(data.inventory)) {
+                    inventory = data.inventory;
+                    salesHistory = data.salesHistory || [];
+                } else if (Array.isArray(data)) {
+                    inventory = data;
+                    salesHistory = [];
+                } else {
+                    throw new Error('Invalid inventory format');
+                }
+                
+                // Save to localStorage for persistence
+                saveToStorage();
+                
+                // Update last loaded date
+                localStorage.setItem('ccd_mobile_last_loaded', new Date().toISOString());
+                localStorage.setItem('ccd_mobile_filename', filename);
+                
+                // Hide load section if it exists
+                const loadSection = document.getElementById('loadSection');
+                if (loadSection) {
+                    loadSection.style.display = 'none';
+                }
+                
+                // Refresh display
+                applyFilters();
+                updateStats();
+                
+                showToast(`Loaded ${inventory.length} items from ${filename}`, 'success');
+                
+            } catch (err) {
+                console.error('Error parsing file:', err);
+                showToast('Failed to load file: ' + err.message, 'error');
+            }
+        }
+        
+        function loadFromStorage() {
+            const saved = localStorage.getItem('ccd_mobile_inventory');
+            const savedSales = localStorage.getItem('ccd_mobile_sales');
+            if (saved) {
+                try {
+                    inventory = JSON.parse(saved);
+                    salesHistory = savedSales ? JSON.parse(savedSales) : [];
+                    
+                    // Hide load section if it exists
+                    const loadSection = document.getElementById('loadSection');
+                    if (loadSection) {
+                        loadSection.style.display = 'none';
+                    }
+                    
+                    applyFilters();
+                    updateStats();
+                    
+                    const lastLoaded = localStorage.getItem('ccd_mobile_last_loaded');
+                    if (lastLoaded) {
+                        document.getElementById('lastLoadedDate').textContent = 
+                            new Date(lastLoaded).toLocaleDateString();
+                    }
+                    
+                    updateAutoSaveIndicator();
+                } catch (err) {
+                    console.error('Error loading from storage:', err);
+                }
+            }
+        }
+        
+        function saveToStorage() {
+            try {
+                localStorage.setItem('ccd_mobile_inventory', JSON.stringify(inventory));
+                localStorage.setItem('ccd_mobile_sales', JSON.stringify(salesHistory));
+            } catch (err) {
+                console.error('Error saving to storage:', err);
+                showToast('Storage error - data may not persist', 'error');
+            }
+        }
+        
+        function updateAutoSaveIndicator() {
+            const indicator = document.getElementById('autoSaveIndicator');
+            if (indicator) {
+                if (autoSaveEnabled && fileHandle) {
+                    indicator.textContent = '🔄 Auto-save ON';
+                    indicator.classList.add('active');
+                } else {
+                    indicator.textContent = '💾 Manual save';
+                    indicator.classList.remove('active');
+                }
+            }
+        }
+
+        // ============================================================================
+        // FILTERING & SEARCH
+        // ============================================================================
+        
+        function handleSearch() {
+            searchQuery = document.getElementById('searchInput').value.toLowerCase();
+            document.getElementById('searchClear').classList.toggle('visible', searchQuery.length > 0);
+            applyFilters();
+        }
+        
+        function clearSearch() {
+            document.getElementById('searchInput').value = '';
+            searchQuery = '';
+            document.getElementById('searchClear').classList.remove('visible');
+            applyFilters();
+        }
+        
+        function setFilter(filter) {
+            currentFilter = filter;
+            tmReportVisible = false; // Exit TM report mode
+            
+            // Hide shelf filter bar unless shelf filter selected
+            if (filter !== 'shelf') {
+                document.getElementById('shelfFilterBar').classList.remove('visible');
+                shelfFilter = '';
+            }
+            
+            // Update active tab
+            document.querySelectorAll('.filter-tab').forEach(tab => {
+                tab.classList.toggle('active', tab.dataset.filter === filter);
+            });
+            
+            applyFilters();
+        }
+        
+        function applyFilters() {
+            filteredInventory = inventory.filter(item => {
+                // Skip inactive items
+                if (item.isActive === false) return false;
+                
+                // Search filter
+                if (searchQuery) {
+                    const searchable = [
+                        item.productName || '',
+                        item.brandName || '',
+                        item.sku || '',
+                        item.shelfNumber || ''
+                    ].join(' ').toLowerCase();
+                    
+                    if (!searchable.includes(searchQuery)) return false;
+                }
+                
+                // Shelf filter
+                if (currentFilter === 'shelf' && shelfFilter) {
+                    const shelf = (item.shelfNumber || '').toLowerCase();
+                    if (!shelf.includes(shelfFilter)) return false;
+                }
+                
+                // Channel filter
+                if (currentFilter === 'all' || currentFilter === 'shelf') return true;
+                
+                if (currentFilter === 'low') {
+                    return item.qty <= (item.minParLevel || 2);
+                }
+                
+                // Channel-specific filter
+                return item.channels && item.channels[currentFilter] > 0;
+            });
+            
+            renderItems();
+        }
+        
+        function updateStats() {
+            const activeItems = inventory.filter(i => i.isActive !== false);
+            const totalQty = activeItems.reduce((sum, i) => sum + (i.qty || 0), 0);
+            const lowStock = activeItems.filter(i => i.qty <= (i.minParLevel || 2)).length;
+            
+            document.getElementById('statItems').textContent = activeItems.length;
+            document.getElementById('statQty').textContent = totalQty.toLocaleString();
+            document.getElementById('statLow').textContent = lowStock;
+        }
+
+        // ============================================================================
+        // RENDERING
+        // ============================================================================
+        
+        function renderItems() {
+            const container = document.getElementById('itemList');
+            
+            // Keep load section if no inventory
+            if (inventory.length === 0) {
+                container.innerHTML = `
+                    <div class="load-section" id="loadSection">
+                        <div class="load-card">
+                            <div class="load-icon">📂</div>
+                            <div class="load-title">Load Inventory</div>
+                            <div class="load-desc">Select your exported inventory JSON file from OneDrive to get started.</div>
+                            <button class="load-btn" onclick="loadFileWithHandle()">
+                                Select JSON File
+                            </button>
+                            <p style="font-size: 12px; color: var(--text-light); margin-top: 15px;">
+                                💡 Using Chrome/Edge? Changes will auto-save back to the file!
+                            </p>
+                        </div>
+                    </div>
+                `;
+                return;
+            }
+            
+            if (filteredInventory.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state-icon">🔍</div>
+                        <div class="empty-state-title">No items found</div>
+                        <div>Try adjusting your search or filters</div>
+                    </div>
+                `;
+                return;
+            }
+            
+            container.innerHTML = filteredInventory.map(item => `
+                <div class="item-card" onclick="openItem(${item.id})">
+                    <div class="item-header">
+                        <div class="item-name">${escapeHtml(item.productName || 'Unnamed Item')}</div>
+                        <div class="item-qty ${item.qty <= (item.minParLevel || 2) ? 'low' : ''}">${item.qty || 0}</div>
+                    </div>
+                    <div class="item-meta">
+                        <span class="item-sku">${escapeHtml(item.sku || 'No SKU')}</span>
+                        <span>${escapeHtml(item.brandName || '')}</span>
+                    </div>
+                    <div class="item-channels">
+                        ${renderChannelBadges(item)}
+                    </div>
+                </div>
+            `).join('');
+        }
+        
+        function renderChannelBadges(item) {
+            if (!item.channels) return '';
+            
+            return CHANNELS
+                .filter(ch => item.channels[ch] > 0)
+                .map(ch => `
+                    <span class="channel-badge ${ch}">${CHANNEL_ICONS[ch]} ${item.channels[ch]}</span>
+                `)
+                .join('');
+        }
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // ============================================================================
+        // ITEM MODAL
+        // ============================================================================
+        
+        function openItem(id) {
+            selectedItem = inventory.find(i => i.id === id);
+            if (!selectedItem) return;
+            
+            document.getElementById('modalTitle').textContent = selectedItem.productName || 'Unnamed Item';
+            document.getElementById('modalSubtitle').textContent = 
+                `SKU: ${selectedItem.sku || 'N/A'} | ${selectedItem.brandName || 'No Brand'}`;
+            
+            // Populate details grid
+            renderItemDetails();
+            
+            updateModalTotalQty();
+            renderChannelEditor();
+            
+            document.getElementById('itemModal').classList.add('active');
+        }
+        
+        function renderItemDetails() {
+            if (!selectedItem) return;
+            
+            const grid = document.getElementById('itemDetailsGrid');
+            const metrics = calculateTMMetrics(selectedItem);
+            
+            let html = '';
+            
+            // Shelf Number
+            if (selectedItem.shelfNumber) {
+                html += `
+                    <div class="item-detail">
+                        <div class="item-detail-label">Shelf Location</div>
+                        <div class="item-detail-value highlight">📍 ${escapeHtml(selectedItem.shelfNumber)}</div>
+                    </div>
+                `;
+            }
+            
+            // Wholesale Price
+            if (selectedItem.wholesalePrice) {
+                html += `
+                    <div class="item-detail">
+                        <div class="item-detail-label">Wholesale</div>
+                        <div class="item-detail-value">$${selectedItem.wholesalePrice.toFixed(2)}</div>
+                    </div>
+                `;
+            }
+            
+            // Retail/Coop Price
+            html += `
+                <div class="item-detail">
+                    <div class="item-detail-label">Retail Price</div>
+                    <div class="item-detail-value highlight">$${metrics.retailPrice.toFixed(2)}</div>
+                </div>
+            `;
+            
+            // Min Par Level
+            if (selectedItem.minParLevel) {
+                html += `
+                    <div class="item-detail">
+                        <div class="item-detail-label">Min Par Level</div>
+                        <div class="item-detail-value">${selectedItem.minParLevel}</div>
+                    </div>
+                `;
+            }
+            
+            // Vendor
+            if (selectedItem.vendorName) {
+                html += `
+                    <div class="item-detail full-width">
+                        <div class="item-detail-label">Vendor</div>
+                        <div class="item-detail-value">${escapeHtml(selectedItem.vendorName)}</div>
+                    </div>
+                `;
+            }
+            
+            grid.innerHTML = html;
+        }
+        
+        function closeModal() {
+            document.getElementById('itemModal').classList.remove('active');
+            selectedItem = null;
+            
+            // Return to TM report if we were there
+            if (tmReportVisible) {
+                renderTMReport();
+            }
+        }
+        
+        function closeModalOutside(event) {
+            if (event.target === event.currentTarget) {
+                closeModal();
+            }
+        }
+        
+        function updateModalTotalQty() {
+            if (!selectedItem) return;
+            const qtyEl = document.getElementById('modalTotalQty');
+            qtyEl.textContent = selectedItem.qty || 0;
+            qtyEl.onclick = () => editTotalQty();
+            qtyEl.style.cursor = 'pointer';
+        }
+        
+        function editTotalQty() {
+            if (!selectedItem) return;
+            
+            const currentQty = selectedItem.qty || 0;
+            const newQty = prompt(`Edit total quantity (current: ${currentQty}):`, currentQty);
+            
+            if (newQty === null) return; // Cancelled
+            
+            const parsed = parseInt(newQty);
+            if (isNaN(parsed) || parsed < 0) {
+                showToast('Please enter a valid number', 'error');
+                return;
+            }
+            
+            // Check if new qty is less than total allocated
+            const totalAllocated = CHANNELS.reduce((sum, ch) => 
+                sum + (selectedItem.channels?.[ch] || 0), 0);
+            
+            if (parsed < totalAllocated) {
+                showToast(`Cannot be less than allocated (${totalAllocated})`, 'error');
+                return;
+            }
+            
+            selectedItem.qty = parsed;
+            updateModalTotalQty();
+            markUnsaved();
+            showToast('Total quantity updated', 'success');
+        }
+        
+        function renderChannelEditor() {
+            if (!selectedItem) return;
+            
+            const container = document.getElementById('channelEditor');
+            
+            // Ensure channels object exists
+            if (!selectedItem.channels) {
+                selectedItem.channels = {};
+            }
+            
+            container.innerHTML = CHANNELS.map(ch => `
+                <div class="channel-row">
+                    <div class="channel-name">
+                        <div class="channel-icon ${ch}">${CHANNEL_ICONS[ch]}</div>
+                        ${CHANNEL_NAMES[ch]}
+                    </div>
+                    <div class="channel-controls">
+                        <button class="qty-btn minus" onclick="adjustChannel('${ch}', -1)">−</button>
+                        <div class="qty-value" id="channel-${ch}">${selectedItem.channels[ch] || 0}</div>
+                        <button class="qty-btn plus" onclick="adjustChannel('${ch}', 1)">+</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+        
+        function adjustChannel(channel, delta) {
+            if (!selectedItem) return;
+            
+            // Ensure channels object exists
+            if (!selectedItem.channels) {
+                selectedItem.channels = {};
+            }
+            
+            const current = selectedItem.channels[channel] || 0;
+            const newVal = Math.max(0, current + delta);
+            
+            // Etsy and Wix share inventory - they should have the same value
+            // Wayfair and TreasureMarts are separate allocations
+            
+            // Calculate allocated to non-shared channels
+            let otherAllocated = 0;
+            
+            if (channel === 'etsy' || channel === 'wix') {
+                // For Etsy/Wix, only count Wayfair and TreasureMarts as "other"
+                otherAllocated = (selectedItem.channels['wayfair'] || 0) + 
+                                 (selectedItem.channels['treasuremarts'] || 0);
+            } else {
+                // For Wayfair/TreasureMarts, count Etsy (or Wix, they're the same) plus the other non-shared
+                const etsyWixQty = Math.max(selectedItem.channels['etsy'] || 0, selectedItem.channels['wix'] || 0);
+                const otherChannel = channel === 'wayfair' ? 'treasuremarts' : 'wayfair';
+                otherAllocated = etsyWixQty + (selectedItem.channels[otherChannel] || 0);
+            }
+            
+            // Check if new allocation would exceed total
+            if (newVal + otherAllocated > selectedItem.qty) {
+                showToast(`Total qty is ${selectedItem.qty}. Tap qty to edit.`, 'error');
+                return;
+            }
+            
+            selectedItem.channels[channel] = newVal;
+            document.getElementById(`channel-${channel}`).textContent = newVal;
+            
+            // If Etsy or Wix, sync the other one to match
+            if (channel === 'etsy') {
+                selectedItem.channels['wix'] = newVal;
+                document.getElementById('channel-wix').textContent = newVal;
+            } else if (channel === 'wix') {
+                selectedItem.channels['etsy'] = newVal;
+                document.getElementById('channel-etsy').textContent = newVal;
+            }
+            
+            markUnsaved();
+        }
+
+        // ============================================================================
+        // MARK SOLD
+        // ============================================================================
+        
+        function showMarkSold() {
+            if (!selectedItem) return;
+            
+            soldChannel = null;
+            soldQty = 1;
+            
+            document.getElementById('soldItemName').textContent = selectedItem.productName || 'Unnamed Item';
+            document.getElementById('soldQtyValue').textContent = '1';
+            
+            // Set default date to today
+            const today = new Date().toISOString().split('T')[0];
+            document.getElementById('saleDateInput').value = today;
+            
+            // Set default price to retail price if available
+            const defaultPrice = selectedItem.retailPrice || 0;
+            document.getElementById('salePriceInput').value = defaultPrice > 0 ? defaultPrice.toFixed(2) : '';
+            
+            // Render channel buttons
+            const grid = document.getElementById('soldChannelGrid');
+            grid.innerHTML = CHANNELS.map(ch => {
+                const qty = selectedItem.channels?.[ch] || 0;
+                const disabled = qty === 0;
+                return `
+                    <button class="sold-channel-btn ${disabled ? 'disabled' : ''}" 
+                            onclick="selectSoldChannel('${ch}')"
+                            id="sold-btn-${ch}"
+                            ${disabled ? 'disabled' : ''}>
+                        <span class="icon">${CHANNEL_ICONS[ch]}</span>
+                        ${CHANNEL_NAMES[ch]}
+                        <small style="color: var(--text-light);">(${qty} avail)</small>
+                    </button>
+                `;
+            }).join('');
+            
+            // Update profit preview
+            updateProfitPreview();
+            
+            // Add event listeners for price input
+            document.getElementById('salePriceInput').addEventListener('input', updateProfitPreview);
+            
+            document.getElementById('soldModal').classList.add('active');
+        }
+        
+        function updateProfitPreview() {
+            if (!selectedItem) return;
+            
+            const salePrice = parseFloat(document.getElementById('salePriceInput').value) || 0;
+            const qty = soldQty;
+            
+            // Calculate costs
+            const wholesalePrice = selectedItem.wholesalePrice || 0;
+            const ibShipping = selectedItem.ibShipping || 0;
+            const tariff = selectedItem.tariff || 0;
+            const obShipping = selectedItem.obShipping || 0;
+            
+            const totalCost = (wholesalePrice + ibShipping + tariff + obShipping) * qty;
+            const totalRevenue = salePrice * qty;
+            const profit = totalRevenue - totalCost;
+            
+            document.getElementById('previewRevenue').textContent = `$${totalRevenue.toFixed(2)}`;
+            document.getElementById('previewCost').textContent = `$${totalCost.toFixed(2)}`;
+            
+            const profitEl = document.getElementById('previewProfit');
+            profitEl.textContent = `$${profit.toFixed(2)}`;
+            profitEl.className = profit >= 0 ? 'profit-positive' : 'profit-negative';
+        }
+        
+        function closeSoldModal() {
+            document.getElementById('soldModal').classList.remove('active');
+            // Remove event listener
+            document.getElementById('salePriceInput').removeEventListener('input', updateProfitPreview);
+        }
+        
+        function closeSoldModalOutside(event) {
+            if (event.target === event.currentTarget) {
+                closeSoldModal();
+            }
+        }
+        
+        function selectSoldChannel(channel) {
+            soldChannel = channel;
+            
+            // Update button styles
+            document.querySelectorAll('.sold-channel-btn').forEach(btn => {
+                btn.classList.remove('selected');
+            });
+            document.getElementById(`sold-btn-${channel}`).classList.add('selected');
+        }
+        
+        function adjustSoldQty(delta) {
+            const newVal = soldQty + delta;
+            if (newVal < 1) return;
+            
+            // Check available qty
+            if (soldChannel && selectedItem) {
+                const available = selectedItem.channels?.[soldChannel] || 0;
+                if (newVal > available) {
+                    showToast('Cannot exceed available quantity', 'error');
+                    return;
+                }
+            }
+            
+            soldQty = newVal;
+            document.getElementById('soldQtyValue').textContent = soldQty;
+            updateProfitPreview();
+        }
+        
+        function confirmSold() {
+            if (!soldChannel) {
+                showToast('Please select a channel', 'error');
+                return;
+            }
+            
+            if (!selectedItem) return;
+            
+            const saleDate = document.getElementById('saleDateInput').value;
+            const salePrice = parseFloat(document.getElementById('salePriceInput').value) || 0;
+            
+            if (!saleDate) {
+                showToast('Please enter a sale date', 'error');
+                return;
+            }
+            
+            if (salePrice <= 0) {
+                showToast('Please enter a sale price', 'error');
+                return;
+            }
+            
+            const available = selectedItem.channels?.[soldChannel] || 0;
+            if (soldQty > available) {
+                showToast('Insufficient quantity', 'error');
+                return;
+            }
+            
+            // Calculate costs and profit
+            const wholesalePrice = selectedItem.wholesalePrice || 0;
+            const ibShipping = selectedItem.ibShipping || 0;
+            const tariff = selectedItem.tariff || 0;
+            const obShipping = selectedItem.obShipping || 0;
+            const totalCost = wholesalePrice + ibShipping + tariff + obShipping;
+            const netProfit = salePrice - totalCost;
+            const profitMargin = salePrice > 0 ? ((netProfit / salePrice) * 100) : 0;
+            
+            // Decrement channel qty
+            selectedItem.channels[soldChannel] -= soldQty;
+            
+            // ETSY/WIX SYNC: If selling on Etsy, also reduce Wix. If selling on Wix, also reduce Etsy
+            if (soldChannel === 'etsy' && selectedItem.channels.wix !== undefined) {
+                selectedItem.channels.wix = Math.max(0, selectedItem.channels.wix - soldQty);
+                if (selectedItem.channels.wix === 0) delete selectedItem.channels.wix;
+            } else if (soldChannel === 'wix' && selectedItem.channels.etsy !== undefined) {
+                selectedItem.channels.etsy = Math.max(0, selectedItem.channels.etsy - soldQty);
+                if (selectedItem.channels.etsy === 0) delete selectedItem.channels.etsy;
+            }
+            
+            // Remove channel if qty reaches 0
+            if (selectedItem.channels[soldChannel] === 0) {
+                delete selectedItem.channels[soldChannel];
+            }
+            
+            // Decrement total qty
+            selectedItem.qty = Math.max(0, (selectedItem.qty || 0) - soldQty);
+            
+            // Update last sold date
+            selectedItem.lastSoldDate = new Date().toISOString();
+            
+            // Mark as sold out if qty = 0
+            if (selectedItem.qty === 0) {
+                selectedItem.status = 'sold-out';
+            }
+            
+            // Record sale in history
+            salesHistory.push({
+                id: Date.now(),
+                itemId: selectedItem.id,
+                productName: selectedItem.productName,
+                sku: selectedItem.sku,
+                brandName: selectedItem.brandName,
+                qtySold: soldQty,
+                saleChannel: soldChannel,
+                saleDate: saleDate,
+                salePrice: salePrice,
+                totalRevenue: salePrice * soldQty,
+                totalCost: totalCost * soldQty,
+                netProfit: netProfit * soldQty,
+                profitMargin: profitMargin,
+                wholesalePrice: wholesalePrice,
+                ibShipping: ibShipping,
+                tariff: tariff,
+                obShipping: obShipping,
+                timestamp: new Date().toISOString(),
+                recordedFrom: 'mobile'
+            });
+            
+            markUnsaved();
+            
+            closeSoldModal();
+            closeModal();
+            
+            // Return to TM report if we were there
+            if (tmReportVisible) {
+                renderTMReport();
+            } else {
+                applyFilters();
+            }
+            updateStats();
+            
+            const profitMsg = netProfit >= 0 ? `+$${(netProfit * soldQty).toFixed(2)}` : `-$${Math.abs(netProfit * soldQty).toFixed(2)}`;
+            showToast(`Sale recorded! ${CHANNEL_NAMES[soldChannel]} × ${soldQty} (${profitMsg})`, 'success');
+        }
+
+        // ============================================================================
+        // SAVE & EXPORT
+        // ============================================================================
+        
+        function markUnsaved() {
+            hasUnsavedChanges = true;
+            document.getElementById('unsavedBadge').classList.add('visible');
+            
+            // Auto-save if enabled
+            if (autoSaveEnabled && fileHandle) {
+                autoSaveToFile();
+            }
+        }
+        
+        async function autoSaveToFile() {
+            if (!fileHandle) return;
+            
+            try {
+                // Get audit history to include in save
+                let auditHistory = [];
+                try {
+                    const saved = localStorage.getItem('ccd_audit_history');
+                    if (saved) auditHistory = JSON.parse(saved);
+                } catch (e) {}
+                
+                const writable = await fileHandle.createWritable();
+                const data = { 
+                    inventory: inventory,
+                    salesHistory: salesHistory,
+                    tmAuditHistory: auditHistory
+                };
+                await writable.write(JSON.stringify(data, null, 2));
+                await writable.close();
+                
+                // Update lastFileModified to prevent false sync warnings
+                const file = await fileHandle.getFile();
+                lastFileModified = file.lastModified;
+                
+                hasUnsavedChanges = false;
+                document.getElementById('unsavedBadge').classList.remove('visible');
+                
+                // Brief visual feedback
+                const indicator = document.getElementById('autoSaveIndicator');
+                if (indicator) {
+                    indicator.textContent = '✅ Saved!';
+                    setTimeout(() => {
+                        indicator.textContent = '🔄 Auto-save ON';
+                    }, 1500);
+                }
+                
+            } catch (err) {
+                console.error('Auto-save failed:', err);
+                showToast('Auto-save failed: ' + err.message, 'error');
+            }
+        }
+        
+        async function saveChanges() {
+            // If auto-save is enabled, save to file
+            if (autoSaveEnabled && fileHandle) {
+                await autoSaveToFile();
+                showToast('Saved to file', 'success');
+            } else {
+                // Otherwise just save to localStorage
+                saveToStorage();
+                hasUnsavedChanges = false;
+                document.getElementById('unsavedBadge').classList.remove('visible');
+                showToast('Changes saved locally', 'success');
+            }
+        }
+        
+        function exportChanges() {
+            if (inventory.length === 0) {
+                showToast('No inventory to export', 'error');
+                return;
+            }
+            
+            const data = { 
+                inventory: inventory,
+                salesHistory: salesHistory
+            };
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `CCD-Inventory-${new Date().toISOString().split('T')[0]}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            
+            showToast('Inventory exported', 'success');
+        }
+
+        // ============================================================================
+        // SHELF FILTER
+        // ============================================================================
+        
+        let shelfFilter = '';
+        
+        function showShelfFilter() {
+            document.querySelectorAll('.filter-tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            document.querySelector('[data-filter="shelf"]').classList.add('active');
+            document.getElementById('shelfFilterBar').classList.add('visible');
+            document.getElementById('shelfInput').focus();
+            currentFilter = 'shelf';
+            tmReportVisible = false;
+            applyFilters();
+        }
+        
+        function filterByShelf() {
+            shelfFilter = document.getElementById('shelfInput').value.toLowerCase().trim();
+            applyFilters();
+        }
+        
+        function clearShelfFilter() {
+            document.getElementById('shelfInput').value = '';
+            shelfFilter = '';
+            document.getElementById('shelfFilterBar').classList.remove('visible');
+            setFilter('all');
+        }
+
+        // ============================================================================
+        // TREASURE MARTS WEEKLY REPORT
+        // ============================================================================
+        
+        let countingItem = null;
+        let countValue = 0;
+        let lastFileModified = null;
+        
+        function showTMReport() {
+            tmReportVisible = true;
+            
+            // Update tab styling
+            document.querySelectorAll('.filter-tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            document.querySelector('[data-filter="tmreport"]').classList.add('active');
+            document.getElementById('shelfFilterBar').classList.remove('visible');
+            
+            // Load verification state for current week
+            loadTMVerificationState();
+            
+            renderTMReport();
+        }
+        
+        function hideTMReport() {
+            tmReportVisible = false;
+            setFilter('all');
+        }
+        
+        function getWeekKey() {
+            const now = new Date();
+            const startOfWeek = new Date(now);
+            startOfWeek.setDate(now.getDate() - now.getDay());
+            return startOfWeek.toISOString().split('T')[0];
+        }
+        
+        function getWeekRange() {
+            const now = new Date();
+            const startOfWeek = new Date(now);
+            startOfWeek.setDate(now.getDate() - now.getDay());
+            const endOfWeek = new Date(startOfWeek);
+            endOfWeek.setDate(startOfWeek.getDate() + 6);
+            
+            const options = { month: 'short', day: 'numeric' };
+            return `${startOfWeek.toLocaleDateString('en-US', options)} - ${endOfWeek.toLocaleDateString('en-US', { ...options, year: 'numeric' })}`;
+        }
+        
+        function isAddedThisWeek(addedDate) {
+            if (!addedDate) return false;
+            
+            const added = new Date(addedDate);
+            const now = new Date();
+            
+            const startOfWeek = new Date(now);
+            startOfWeek.setDate(now.getDate() - now.getDay());
+            startOfWeek.setHours(0, 0, 0, 0);
+            
+            const endOfWeek = new Date(startOfWeek);
+            endOfWeek.setDate(startOfWeek.getDate() + 6);
+            endOfWeek.setHours(23, 59, 59, 999);
+            
+            return added >= startOfWeek && added <= endOfWeek;
+        }
+        
+        function calculateTMMetrics(item) {
+            const wholesale = item.wholesalePrice || 0;
+            const ibPercent = item.ibShipping || 0;
+            const ib = wholesale * (ibPercent / 100);
+            const tariff = item.tariff || 0;
+            
+            const retailPrice = item.coopPrice && item.coopPrice > 0 
+                ? item.coopPrice 
+                : wholesale * 2;
+            
+            const totalCost = wholesale + ib + tariff;
+            const netProfit = retailPrice - totalCost;
+            const netProfitMargin = retailPrice > 0 ? (netProfit / retailPrice) * 100 : 0;
+            
+            return { retailPrice, totalCost, netProfit, netProfitMargin };
+        }
+        
+        function loadTMVerificationState() {
+            const weekKey = getWeekKey();
+            const saved = localStorage.getItem('ccd_tm_verification_' + weekKey);
+            
+            if (saved) {
+                try {
+                    const data = JSON.parse(saved);
+                    verifiedItems = data.verified || {};
+                    notFoundItems = data.notFound || {};
+                } catch (e) {
+                    verifiedItems = {};
+                    notFoundItems = {};
+                }
+            } else {
+                // New week, reset verifications
+                verifiedItems = {};
+                notFoundItems = {};
+            }
+            
+            tmReportWeek = weekKey;
+        }
+        
+        function saveTMVerificationState() {
+            const weekKey = getWeekKey();
+            const data = {
+                verified: verifiedItems,
+                notFound: notFoundItems,
+                savedAt: new Date().toISOString()
+            };
+            localStorage.setItem('ccd_tm_verification_' + weekKey, JSON.stringify(data));
+        }
+        
+        function clearTMVerifications() {
+            if (confirm('Reset all TM verifications for this week?')) {
+                verifiedItems = {};
+                notFoundItems = {};
+                saveTMVerificationState();
+                if (tmReportVisible) renderTMReport();
+                showToast('Verifications reset', 'success');
+            }
+        }
+        
+        function renderTMReport() {
+            const container = document.getElementById('itemList');
+            
+            // Get TM items
+            const tmItems = inventory.filter(item => 
+                item.channels && item.channels.treasuremarts && item.channels.treasuremarts > 0
+            );
+            
+            if (tmItems.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state-icon">💎</div>
+                        <div class="empty-state-title">No Treasure Marts Items</div>
+                        <div>Add items to the Treasure Marts channel first</div>
+                        <button class="tm-back-btn" onclick="hideTMReport()">← Back to Inventory</button>
+                    </div>
+                `;
+                return;
+            }
+            
+            // Sort: not found first, then new items, then unverified, then verified
+            const sortedItems = tmItems.sort((a, b) => {
+                const aNotFound = notFoundItems[a.id];
+                const bNotFound = notFoundItems[b.id];
+                const aVerified = verifiedItems[a.id];
+                const bVerified = verifiedItems[b.id];
+                const aIsNew = isAddedThisWeek(a.channelAddedDates?.treasuremarts);
+                const bIsNew = isAddedThisWeek(b.channelAddedDates?.treasuremarts);
+                
+                // Not found items at top
+                if (aNotFound && !bNotFound) return -1;
+                if (!aNotFound && bNotFound) return 1;
+                
+                // New items next
+                if (aIsNew && !bIsNew) return -1;
+                if (!aIsNew && bIsNew) return 1;
+                
+                // Unverified before verified
+                if (!aVerified && bVerified) return -1;
+                if (aVerified && !bVerified) return 1;
+                
+                // Then by shelf number, then brand
+                const shelfCompare = (a.shelfNumber || 'ZZZ').localeCompare(b.shelfNumber || 'ZZZ');
+                if (shelfCompare !== 0) return shelfCompare;
+                
+                return (a.brandName || '').localeCompare(b.brandName || '');
+            });
+            
+            const newCount = sortedItems.filter(item => isAddedThisWeek(item.channelAddedDates?.treasuremarts)).length;
+            const verifiedCount = Object.keys(verifiedItems).filter(id => verifiedItems[id]).length;
+            const notFoundCount = Object.keys(notFoundItems).filter(id => notFoundItems[id]).length;
+            const mismatchCount = Object.values(verifiedItems).filter(v => v && v.mismatch).length;
+            
+            let html = `
+                <div class="tm-report">
+                    <div class="tm-report-header">
+                        <div class="tm-report-title">💎 Treasure Marts Weekly Report</div>
+                        <div class="tm-report-week">Week of ${getWeekRange()}</div>
+                        <div class="tm-report-stats">
+                            <div class="tm-stat">
+                                <div class="tm-stat-value">${tmItems.length}</div>
+                                <div class="tm-stat-label">Total</div>
+                            </div>
+                            <div class="tm-stat">
+                                <div class="tm-stat-value">${newCount}</div>
+                                <div class="tm-stat-label">New</div>
+                            </div>
+                            <div class="tm-stat">
+                                <div class="tm-stat-value">${verifiedCount}</div>
+                                <div class="tm-stat-label">Verified</div>
+                            </div>
+                            <div class="tm-stat ${mismatchCount > 0 ? 'warning' : ''}">
+                                <div class="tm-stat-value">${mismatchCount}</div>
+                                <div class="tm-stat-label">Mismatch</div>
+                            </div>
+                            <div class="tm-stat ${notFoundCount > 0 ? 'danger' : ''}">
+                                <div class="tm-stat-value">${notFoundCount}</div>
+                                <div class="tm-stat-label">Not Found</div>
+                            </div>
+                        </div>
+                        <div class="tm-report-actions">
+                            <button class="tm-report-btn" onclick="showAuditReport()">📊 Audit</button>
+                            <button class="tm-report-btn" onclick="printTMReport()">🖨️ Print</button>
+                            <button class="tm-report-btn" onclick="emailTMReport()">📧 Copy</button>
+                        </div>
+                    </div>
+            `;
+            
+            sortedItems.forEach(item => {
+                const isNew = isAddedThisWeek(item.channelAddedDates?.treasuremarts);
+                const verification = verifiedItems[item.id];
+                const isVerified = verification && verification.verified;
+                const hasMismatch = verification && verification.mismatch;
+                const isNotFound = notFoundItems[item.id];
+                const metrics = calculateTMMetrics(item);
+                const systemQty = item.channels.treasuremarts;
+                const actualQty = verification ? verification.actualQty : systemQty;
+                
+                let cardClass = 'tm-item-card';
+                if (isNotFound) cardClass += ' not-found';
+                else if (hasMismatch) cardClass += ' mismatch';
+                else if (isNew) cardClass += ' new-item';
+                else if (isVerified) cardClass += ' verified';
+                
+                html += `
+                    <div class="${cardClass}" onclick="openItemFromTM(${item.id}, event)">
+                        <div class="tm-item-top">
+                            <div class="tm-item-info">
+                                <div class="tm-item-brand">${escapeHtml(item.brandName || 'No Brand')}</div>
+                                <div class="tm-item-name">
+                                    ${escapeHtml(item.productName || 'Unnamed')}
+                                    ${isNew ? '<span class="tm-new-badge">NEW</span>' : ''}
+                                    ${isVerified && !hasMismatch ? '<span class="tm-verified-badge">✓</span>' : ''}
+                                    ${hasMismatch ? '<span class="tm-mismatch-badge">⚠️ Mismatch</span>' : ''}
+                                    ${isNotFound ? '<span class="tm-notfound-badge">NOT FOUND</span>' : ''}
+                                </div>
+                                <div class="tm-item-meta">
+                                    <span class="tm-item-sku">SKU: ${escapeHtml(item.sku || 'N/A')}</span>
+                                    ${item.shelfNumber ? `<span class="tm-item-shelf">📍 ${escapeHtml(item.shelfNumber)}</span>` : ''}
+                                </div>
+                            </div>
+                            <div class="tm-item-right">
+                                <div class="tm-item-qty ${hasMismatch ? 'mismatch' : ''}">${systemQty}</div>
+                                ${hasMismatch ? `<div class="tm-item-actual">Actual: ${actualQty}</div>` : ''}
+                                <div class="tm-item-price">$${metrics.retailPrice.toFixed(2)}</div>
+                            </div>
+                        </div>
+                        <div class="tm-item-actions" onclick="event.stopPropagation()">
+                            ${isVerified ? `
+                                <button class="tm-action-btn verify done" onclick="undoVerify(${item.id})">
+                                    ✓ Confirmed (${actualQty})
+                                </button>
+                            ` : `
+                                <button class="tm-action-btn verify" onclick="quickConfirm(${item.id}, ${systemQty})">
+                                    ✓ Confirm ${systemQty}
+                                </button>
+                            `}
+                            <button class="tm-action-btn count" onclick="openCountModal(${item.id})">
+                                🔢 Adjust
+                            </button>
+                            <button class="tm-action-btn not-found ${isNotFound ? 'active' : ''}" onclick="toggleNotFound(${item.id})">
+                                ${isNotFound ? '↩️ Found' : '❓ Missing'}
+                            </button>
+                        </div>
+                    </div>
+                `;
+            });
+            
+            html += `
+                    <button class="tm-back-btn" onclick="hideTMReport()">← Back to Inventory</button>
+                </div>
+            `;
+            
+            container.innerHTML = html;
+        }
+        
+        // Count Modal Functions
+        function openCountModal(itemId) {
+            countingItem = inventory.find(i => i.id === itemId);
+            if (!countingItem) return;
+            
+            const systemQty = countingItem.channels?.treasuremarts || 0;
+            const existingVerification = verifiedItems[itemId];
+            countValue = existingVerification ? existingVerification.actualQty : systemQty;
+            
+            document.getElementById('countItemName').textContent = countingItem.productName || 'Unnamed';
+            document.getElementById('countItemSku').textContent = `SKU: ${countingItem.sku || 'N/A'}`;
+            document.getElementById('countCurrent').textContent = `System Qty: ${systemQty}`;
+            document.getElementById('countValue').textContent = countValue;
+            
+            updateCountMismatchWarning(systemQty);
+            
+            document.getElementById('countModal').classList.add('active');
+        }
+        
+        function closeCountModal() {
+            document.getElementById('countModal').classList.remove('active');
+            countingItem = null;
+        }
+        
+        function closeCountModalOutside(event) {
+            if (event.target === event.currentTarget) {
+                closeCountModal();
+            }
+        }
+        
+        function adjustCount(delta) {
+            countValue = Math.max(0, countValue + delta);
+            document.getElementById('countValue').textContent = countValue;
+            
+            const systemQty = countingItem?.channels?.treasuremarts || 0;
+            updateCountMismatchWarning(systemQty);
+        }
+        
+        function updateCountMismatchWarning(systemQty) {
+            const warning = document.getElementById('countMismatchWarning');
+            const countDisplay = document.getElementById('countValue');
+            
+            if (countValue !== systemQty) {
+                warning.style.display = 'block';
+                countDisplay.classList.add('mismatch');
+            } else {
+                warning.style.display = 'none';
+                countDisplay.classList.remove('mismatch');
+            }
+        }
+        
+        function confirmCount() {
+            if (!countingItem) return;
+            
+            const systemQty = countingItem.channels?.treasuremarts || 0;
+            const hasMismatch = countValue !== systemQty;
+            
+            verifiedItems[countingItem.id] = {
+                verified: true,
+                actualQty: countValue,
+                systemQty: systemQty,
+                mismatch: hasMismatch,
+                verifiedAt: new Date().toISOString()
+            };
+            
+            // Remove from not found if it was there
+            delete notFoundItems[countingItem.id];
+            
+            // If mismatch and user confirms, update the actual inventory
+            if (hasMismatch) {
+                if (confirm(`Update system quantity from ${systemQty} to ${countValue}?`)) {
+                    // Track the adjustment BEFORE making changes
+                    trackAuditAdjustment(countingItem, 'mismatch', systemQty, countValue);
+                    
+                    countingItem.channels.treasuremarts = countValue;
+                    
+                    // Update total qty proportionally
+                    const diff = countValue - systemQty;
+                    countingItem.qty = Math.max(0, (countingItem.qty || 0) + diff);
+                    
+                    verifiedItems[countingItem.id].adjusted = true;
+                    markUnsaved();
+                }
+            }
+            
+            saveTMVerificationState();
+            closeCountModal();
+            renderTMReport();
+            
+            showToast(hasMismatch ? 'Count verified (mismatch flagged)' : 'Count verified ✓', hasMismatch ? '' : 'success');
+        }
+        
+        function toggleNotFound(itemId) {
+            const item = inventory.find(i => i.id === itemId);
+            if (!item) return;
+            
+            if (notFoundItems[itemId]) {
+                // UNDO: Restore the original quantity
+                const originalQty = notFoundItems[itemId].originalQty || 0;
+                item.channels.treasuremarts = originalQty;
+                item.qty = Math.max(0, (item.qty || 0) + originalQty);
+                
+                delete notFoundItems[itemId];
+                showToast('Item restored to inventory', 'success');
+            } else {
+                // MARK NOT FOUND: Save original qty and zero it out
+                const currentQty = item.channels?.treasuremarts || 0;
+                
+                notFoundItems[itemId] = {
+                    markedAt: new Date().toISOString(),
+                    originalQty: currentQty,
+                    sku: item.sku,
+                    productName: item.productName,
+                    brandName: item.brandName
+                };
+                
+                // Zero out the TM channel and reduce total qty
+                item.channels.treasuremarts = 0;
+                item.qty = Math.max(0, (item.qty || 0) - currentQty);
+                
+                // Remove from verified if it was there
+                delete verifiedItems[itemId];
+                
+                // Track this as an audit adjustment
+                trackAuditAdjustment(item, 'not_found', currentQty, 0);
+                
+                showToast(`Marked not found (was ${currentQty})`, '');
+                markUnsaved();
+            }
+            
+            saveTMVerificationState();
+            renderTMReport();
+        }
+        
+        function trackAuditAdjustment(item, type, oldQty, newQty) {
+            // Get or create audit history
+            let auditHistory = [];
+            try {
+                const saved = localStorage.getItem('ccd_audit_history');
+                if (saved) auditHistory = JSON.parse(saved);
+            } catch (e) {}
+            
+            auditHistory.push({
+                id: item.id,
+                sku: item.sku,
+                productName: item.productName,
+                brandName: item.brandName,
+                shelfNumber: item.shelfNumber,
+                wholesalePrice: item.wholesalePrice,
+                type: type, // 'not_found', 'mismatch', 'adjusted'
+                oldQty: oldQty,
+                newQty: newQty,
+                difference: newQty - oldQty,
+                timestamp: new Date().toISOString(),
+                weekKey: getWeekKey()
+            });
+            
+            // Keep last 500 entries
+            if (auditHistory.length > 500) {
+                auditHistory = auditHistory.slice(-500);
+            }
+            
+            localStorage.setItem('ccd_audit_history', JSON.stringify(auditHistory));
+        }
+        
+        function openItemFromTM(itemId, event) {
+            // Don't open if clicking on action buttons
+            if (event && event.target.closest('.tm-item-actions')) {
+                return;
+            }
+            openItem(itemId);
+        }
+        
+        function quickConfirm(itemId, expectedQty) {
+            const item = inventory.find(i => i.id === itemId);
+            if (!item) return;
+            
+            verifiedItems[itemId] = {
+                verified: true,
+                actualQty: expectedQty,
+                systemQty: expectedQty,
+                mismatch: false,
+                verifiedAt: new Date().toISOString()
+            };
+            
+            // Remove from not found if it was there
+            delete notFoundItems[itemId];
+            
+            saveTMVerificationState();
+            renderTMReport();
+            
+            showToast('✓ Confirmed', 'success');
+        }
+        
+        function undoVerify(itemId) {
+            delete verifiedItems[itemId];
+            saveTMVerificationState();
+            renderTMReport();
+            showToast('Verification removed', '');
+        }
+        
+        function verifyTMItem(itemId) {
+            const item = inventory.find(i => i.id === itemId);
+            if (!item) return;
+            
+            const systemQty = item.channels?.treasuremarts || 0;
+            
+            verifiedItems[itemId] = {
+                verified: true,
+                actualQty: systemQty,
+                systemQty: systemQty,
+                mismatch: false,
+                verifiedAt: new Date().toISOString()
+            };
+            
+            delete notFoundItems[itemId];
+            saveTMVerificationState();
+            renderTMReport();
+            
+            showToast('Item verified ✓', 'success');
+        }
+        
+        function quickTMSold(itemId) {
+            selectedItem = inventory.find(i => i.id === itemId);
+            if (!selectedItem) return;
+            
+            soldChannel = 'treasuremarts';
+            soldQty = 1;
+            
+            document.getElementById('soldItemName').textContent = selectedItem.productName || 'Unnamed Item';
+            document.getElementById('soldQtyValue').textContent = '1';
+            
+            const today = new Date().toISOString().split('T')[0];
+            document.getElementById('saleDateInput').value = today;
+            
+            const metrics = calculateTMMetrics(selectedItem);
+            document.getElementById('salePriceInput').value = metrics.retailPrice.toFixed(2);
+            
+            const grid = document.getElementById('soldChannelGrid');
+            grid.innerHTML = CHANNELS.map(ch => {
+                const qty = selectedItem.channels?.[ch] || 0;
+                const disabled = qty === 0;
+                const selected = ch === 'treasuremarts';
+                return `
+                    <button class="sold-channel-btn ${disabled ? 'disabled' : ''} ${selected ? 'selected' : ''}" 
+                            onclick="selectSoldChannel('${ch}')"
+                            id="sold-btn-${ch}"
+                            ${disabled ? 'disabled' : ''}>
+                        <span class="icon">${CHANNEL_ICONS[ch]}</span>
+                        ${CHANNEL_NAMES[ch]}
+                        <small style="color: var(--text-light);">(${qty} avail)</small>
+                    </button>
+                `;
+            }).join('');
+            
+            updateProfitPreview();
+            document.getElementById('salePriceInput').addEventListener('input', updateProfitPreview);
+            document.getElementById('soldModal').classList.add('active');
+        }
+        
+        // Export TM Report
+        function exportTMReport() {
+            const tmItems = inventory.filter(item => 
+                item.channels && item.channels.treasuremarts && item.channels.treasuremarts > 0
+            );
+            
+            let report = `TREASURE MARTS WEEKLY INVENTORY REPORT\n`;
+            report += `Week of ${getWeekRange()}\n`;
+            report += `Generated: ${new Date().toLocaleString()}\n`;
+            report += `${'='.repeat(60)}\n\n`;
+            
+            const verifiedCount = Object.keys(verifiedItems).filter(id => verifiedItems[id]).length;
+            const notFoundCount = Object.keys(notFoundItems).filter(id => notFoundItems[id]).length;
+            const mismatchCount = Object.values(verifiedItems).filter(v => v && v.mismatch).length;
+            
+            report += `SUMMARY\n`;
+            report += `-`.repeat(30) + `\n`;
+            report += `Total Items: ${tmItems.length}\n`;
+            report += `Verified: ${verifiedCount}\n`;
+            report += `Mismatches: ${mismatchCount}\n`;
+            report += `Not Found: ${notFoundCount}\n\n`;
+            
+            if (mismatchCount > 0) {
+                report += `QUANTITY MISMATCHES\n`;
+                report += `-`.repeat(30) + `\n`;
+                tmItems.forEach(item => {
+                    const v = verifiedItems[item.id];
+                    if (v && v.mismatch) {
+                        report += `${item.sku} - ${item.productName}\n`;
+                        report += `  System: ${v.systemQty} → Actual: ${v.actualQty} ${v.adjusted ? '(ADJUSTED)' : ''}\n`;
+                    }
+                });
+                report += `\n`;
+            }
+            
+            if (notFoundCount > 0) {
+                report += `NOT FOUND ITEMS\n`;
+                report += `-`.repeat(30) + `\n`;
+                tmItems.forEach(item => {
+                    if (notFoundItems[item.id]) {
+                        report += `${item.sku} - ${item.productName} (Shelf: ${item.shelfNumber || 'N/A'})\n`;
+                    }
+                });
+                report += `\n`;
+            }
+            
+            report += `ALL ITEMS\n`;
+            report += `-`.repeat(30) + `\n`;
+            tmItems.forEach(item => {
+                const v = verifiedItems[item.id];
+                const nf = notFoundItems[item.id];
+                const status = nf ? '[NOT FOUND]' : (v?.verified ? '[✓]' : '[ ]');
+                const metrics = calculateTMMetrics(item);
+                report += `${status} ${item.sku} | ${item.brandName} | ${item.productName} | Qty: ${item.channels.treasuremarts} | $${metrics.retailPrice.toFixed(2)}\n`;
+            });
+            
+            // Download as text file
+            const blob = new Blob([report], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `TM-Report-${getWeekKey()}.txt`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            
+            showToast('Report exported', 'success');
+        }
+        
+        function emailTMReport() {
+            const tmItems = inventory.filter(item => 
+                item.channels && item.channels.treasuremarts && item.channels.treasuremarts > 0
+            );
+            
+            const verifiedCount = Object.keys(verifiedItems).filter(id => verifiedItems[id]).length;
+            const notFoundCount = Object.keys(notFoundItems).filter(id => notFoundItems[id]).length;
+            const mismatchCount = Object.values(verifiedItems).filter(v => v && v.mismatch).length;
+            
+            let body = `TM Weekly Report - ${getWeekRange()}\n\n`;
+            body += `Total: ${tmItems.length} | Verified: ${verifiedCount} | Mismatches: ${mismatchCount} | Not Found: ${notFoundCount}\n\n`;
+            
+            if (mismatchCount > 0) {
+                body += `MISMATCHES:\n`;
+                tmItems.forEach(item => {
+                    const v = verifiedItems[item.id];
+                    if (v && v.mismatch) {
+                        body += `- ${item.sku}: ${v.systemQty} to ${v.actualQty}\n`;
+                    }
+                });
+                body += `\n`;
+            }
+            
+            if (notFoundCount > 0) {
+                body += `NOT FOUND:\n`;
+                tmItems.forEach(item => {
+                    if (notFoundItems[item.id]) {
+                        body += `- ${item.sku}: ${item.productName}\n`;
+                    }
+                });
+            }
+            
+            // Try to copy to clipboard instead since mailto is problematic in webviews
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(body).then(() => {
+                    showToast('Report copied! Paste into email.', 'success');
+                }).catch(() => {
+                    // Fallback - show in alert
+                    alert('Copy this report:\n\n' + body);
+                });
+            } else {
+                alert('Copy this report:\n\n' + body);
+            }
+        }
+        
+        function showAuditReport() {
+            let auditHistory = [];
+            try {
+                const saved = localStorage.getItem('ccd_audit_history');
+                if (saved) auditHistory = JSON.parse(saved);
+            } catch (e) {}
+            
+            // Filter to current week
+            const weekKey = getWeekKey();
+            const thisWeekAudits = auditHistory.filter(a => a.weekKey === weekKey);
+            
+            if (thisWeekAudits.length === 0) {
+                showToast('No adjustments this week', '');
+                return;
+            }
+            
+            // Calculate totals
+            const lostItemsAudit = thisWeekAudits.filter(a => a.type === 'not_found');
+            const mismatchItemsAudit = thisWeekAudits.filter(a => a.type === 'mismatch');
+            
+            let totalLost = 0;
+            let totalLostValue = 0;
+            let totalAdjustments = 0;
+            let totalAdjustmentValue = 0;
+            
+            lostItemsAudit.forEach(a => {
+                totalLost += a.oldQty;
+                totalLostValue += (a.wholesalePrice || 0) * a.oldQty;
+            });
+            
+            mismatchItemsAudit.forEach(a => {
+                const diff = a.newQty - a.oldQty;
+                totalAdjustments += diff;
+                totalAdjustmentValue += (a.wholesalePrice || 0) * diff;
+            });
+            
+            // Build report HTML
+            let reportHTML = `
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>TM Audit Report - ${getWeekRange()}</title>
+                    <meta name="viewport" content="width=device-width, initial-scale=1">
+                    <style>
+                        * { box-sizing: border-box; margin: 0; padding: 0; }
+                        body { font-family: -apple-system, sans-serif; padding: 15px; font-size: 14px; background: #f5f5f5; }
+                        h1 { font-size: 18px; margin-bottom: 5px; color: #333; }
+                        .subtitle { color: #666; margin-bottom: 15px; font-size: 12px; }
+                        .summary { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 20px; }
+                        .summary-card { background: white; padding: 15px; border-radius: 10px; text-align: center; }
+                        .summary-card.danger { background: #fee2e2; border-left: 4px solid #ef4444; }
+                        .summary-card.warning { background: #fef3c7; border-left: 4px solid #f59e0b; }
+                        .summary-value { font-size: 24px; font-weight: bold; }
+                        .summary-label { font-size: 11px; color: #666; }
+                        .section { background: white; border-radius: 10px; margin-bottom: 15px; overflow: hidden; }
+                        .section-header { background: #ef4444; color: white; padding: 10px 15px; font-weight: 600; }
+                        .section-header.warning { background: #f59e0b; }
+                        .item-row { padding: 12px 15px; border-bottom: 1px solid #eee; }
+                        .item-row:last-child { border-bottom: none; }
+                        .item-name { font-weight: 600; margin-bottom: 4px; }
+                        .item-meta { font-size: 12px; color: #666; display: flex; gap: 10px; flex-wrap: wrap; }
+                        .item-qty { color: #ef4444; font-weight: 600; }
+                        .item-qty.adjusted { color: #f59e0b; }
+                        .no-items { padding: 20px; text-align: center; color: #999; }
+                        @media print { body { background: white; } }
+                    </style>
+                </head>
+                <body>
+                    <h1>📊 TM Audit Report</h1>
+                    <div class="subtitle">Week of ${getWeekRange()} • Generated ${new Date().toLocaleString()}</div>
+                    
+                    <div class="summary">
+                        <div class="summary-card danger">
+                            <div class="summary-value">${lostItemsAudit.length}</div>
+                            <div class="summary-label">Items Lost</div>
+                        </div>
+                        <div class="summary-card danger">
+                            <div class="summary-value">$${totalLostValue.toFixed(2)}</div>
+                            <div class="summary-label">Lost Value (Cost)</div>
+                        </div>
+                        <div class="summary-card warning">
+                            <div class="summary-value">${mismatchItemsAudit.length}</div>
+                            <div class="summary-label">Qty Adjusted</div>
+                        </div>
+                        <div class="summary-card warning">
+                            <div class="summary-value">${totalAdjustments >= 0 ? '+' : ''}${totalAdjustments}</div>
+                            <div class="summary-label">Net Change</div>
+                        </div>
+                    </div>
+            `;
+            
+            // Lost/Not Found Items Section
+            reportHTML += `<div class="section">
+                <div class="section-header">🚨 Lost / Not Found Items</div>`;
+            
+            if (lostItemsAudit.length === 0) {
+                reportHTML += `<div class="no-items">No lost items this week</div>`;
+            } else {
+                lostItemsAudit.forEach(a => {
+                    reportHTML += `
+                        <div class="item-row">
+                            <div class="item-name">${a.productName || 'Unknown'}</div>
+                            <div class="item-meta">
+                                <span>SKU: ${a.sku || '-'}</span>
+                                <span>Brand: ${a.brandName || '-'}</span>
+                                <span>Shelf: ${a.shelfNumber || '-'}</span>
+                            </div>
+                            <div class="item-meta">
+                                <span class="item-qty">Lost: ${a.oldQty} units</span>
+                                <span>Cost: $${((a.wholesalePrice || 0) * a.oldQty).toFixed(2)}</span>
+                                <span>${new Date(a.timestamp).toLocaleDateString()}</span>
+                            </div>
+                        </div>
+                    `;
+                });
+            }
+            reportHTML += `</div>`;
+            
+            // Quantity Adjustments Section
+            reportHTML += `<div class="section">
+                <div class="section-header warning">⚠️ Quantity Adjustments</div>`;
+            
+            if (mismatchItemsAudit.length === 0) {
+                reportHTML += `<div class="no-items">No quantity adjustments this week</div>`;
+            } else {
+                mismatchItemsAudit.forEach(a => {
+                    const diff = a.newQty - a.oldQty;
+                    reportHTML += `
+                        <div class="item-row">
+                            <div class="item-name">${a.productName || 'Unknown'}</div>
+                            <div class="item-meta">
+                                <span>SKU: ${a.sku || '-'}</span>
+                                <span>Brand: ${a.brandName || '-'}</span>
+                                <span>Shelf: ${a.shelfNumber || '-'}</span>
+                            </div>
+                            <div class="item-meta">
+                                <span class="item-qty adjusted">${a.oldQty} → ${a.newQty} (${diff >= 0 ? '+' : ''}${diff})</span>
+                                <span>Cost Impact: $${((a.wholesalePrice || 0) * diff).toFixed(2)}</span>
+                                <span>${new Date(a.timestamp).toLocaleDateString()}</span>
+                            </div>
+                        </div>
+                    `;
+                });
+            }
+            reportHTML += `</div>`;
+            
+            reportHTML += `
+                </body>
+                </html>
+            `;
+            
+            // Open in new window
+            const reportWindow = window.open('', '_blank');
+            if (reportWindow) {
+                reportWindow.document.write(reportHTML);
+                reportWindow.document.close();
+            } else {
+                showToast('Please allow popups for report', 'error');
+            }
+        }
+        
+        function printTMReport() {
+            const tmItems = inventory.filter(item => 
+                item.channels && item.channels.treasuremarts && item.channels.treasuremarts > 0
+            );
+            
+            const verifiedCount = Object.keys(verifiedItems).filter(id => verifiedItems[id]).length;
+            const notFoundCount = Object.keys(notFoundItems).filter(id => notFoundItems[id]).length;
+            const mismatchCount = Object.values(verifiedItems).filter(v => v && v.mismatch).length;
+            
+            // Sort items same as display
+            const sortedItems = tmItems.sort((a, b) => {
+                const aNotFound = notFoundItems[a.id];
+                const bNotFound = notFoundItems[b.id];
+                const aVerified = verifiedItems[a.id];
+                const bVerified = verifiedItems[b.id];
+                const aIsNew = isAddedThisWeek(a.channelAddedDates?.treasuremarts);
+                const bIsNew = isAddedThisWeek(b.channelAddedDates?.treasuremarts);
+                
+                if (aNotFound && !bNotFound) return -1;
+                if (!aNotFound && bNotFound) return 1;
+                if (aIsNew && !bIsNew) return -1;
+                if (!aIsNew && bIsNew) return 1;
+                if (!aVerified && bVerified) return -1;
+                if (aVerified && !bVerified) return 1;
+                
+                const shelfCompare = (a.shelfNumber || 'ZZZ').localeCompare(b.shelfNumber || 'ZZZ');
+                if (shelfCompare !== 0) return shelfCompare;
+                return (a.brandName || '').localeCompare(b.brandName || '');
+            });
+            
+            let printHTML = `
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>TM Report - ${getWeekRange()}</title>
+                    <style>
+                        * { box-sizing: border-box; margin: 0; padding: 0; }
+                        body { font-family: -apple-system, sans-serif; padding: 20px; font-size: 12px; }
+                        h1 { font-size: 18px; margin-bottom: 5px; }
+                        .subtitle { color: #666; margin-bottom: 15px; }
+                        .summary { display: flex; gap: 20px; margin-bottom: 20px; padding: 10px; background: #f5f5f5; border-radius: 8px; }
+                        .summary-item { text-align: center; }
+                        .summary-value { font-size: 20px; font-weight: bold; }
+                        .summary-label { font-size: 10px; color: #666; }
+                        table { width: 100%; border-collapse: collapse; }
+                        th, td { padding: 8px 6px; text-align: left; border-bottom: 1px solid #ddd; }
+                        th { background: #f5f5f5; font-weight: 600; font-size: 11px; }
+                        .status { width: 30px; text-align: center; }
+                        .qty { text-align: center; font-weight: bold; }
+                        .price { text-align: right; }
+                        .new { background: #d1fae5; }
+                        .not-found { background: #fee2e2; }
+                        .mismatch { background: #fef3c7; }
+                        .verified { color: #3b82f6; }
+                        @media print {
+                            body { padding: 10px; }
+                            .no-print { display: none; }
+                        }
+                    </style>
+                </head>
+                <body>
+                    <h1>💎 Treasure Marts Weekly Report</h1>
+                    <div class="subtitle">Week of ${getWeekRange()} • Generated ${new Date().toLocaleString()}</div>
+                    
+                    <div class="summary">
+                        <div class="summary-item">
+                            <div class="summary-value">${tmItems.length}</div>
+                            <div class="summary-label">Total Items</div>
+                        </div>
+                        <div class="summary-item">
+                            <div class="summary-value">${verifiedCount}</div>
+                            <div class="summary-label">Verified</div>
+                        </div>
+                        <div class="summary-item">
+                            <div class="summary-value" style="color: ${mismatchCount > 0 ? '#f59e0b' : 'inherit'}">${mismatchCount}</div>
+                            <div class="summary-label">Mismatches</div>
+                        </div>
+                        <div class="summary-item">
+                            <div class="summary-value" style="color: ${notFoundCount > 0 ? '#ef4444' : 'inherit'}">${notFoundCount}</div>
+                            <div class="summary-label">Not Found</div>
+                        </div>
+                    </div>
+                    
+                    <table>
+                        <thead>
+                            <tr>
+                                <th class="status">✓</th>
+                                <th>SKU</th>
+                                <th>Shelf</th>
+                                <th>Brand</th>
+                                <th>Product</th>
+                                <th class="qty">Qty</th>
+                                <th class="price">Price</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+            `;
+            
+            sortedItems.forEach(item => {
+                const v = verifiedItems[item.id];
+                const nf = notFoundItems[item.id];
+                const isNew = isAddedThisWeek(item.channelAddedDates?.treasuremarts);
+                const metrics = calculateTMMetrics(item);
+                const systemQty = item.channels.treasuremarts;
+                
+                let rowClass = '';
+                if (nf) rowClass = 'not-found';
+                else if (v?.mismatch) rowClass = 'mismatch';
+                else if (isNew) rowClass = 'new';
+                
+                let statusIcon = '☐';
+                if (nf) statusIcon = '✗';
+                else if (v?.verified) statusIcon = '✓';
+                
+                let qtyDisplay = systemQty;
+                if (v?.mismatch) {
+                    qtyDisplay = `${v.systemQty}→${v.actualQty}`;
+                }
+                
+                printHTML += `
+                    <tr class="${rowClass}">
+                        <td class="status ${v?.verified ? 'verified' : ''}">${statusIcon}</td>
+                        <td>${item.sku || '-'}</td>
+                        <td>${item.shelfNumber || '-'}</td>
+                        <td>${item.brandName || '-'}</td>
+                        <td>${item.productName || '-'}${isNew ? ' 🆕' : ''}</td>
+                        <td class="qty">${qtyDisplay}</td>
+                        <td class="price">$${metrics.retailPrice.toFixed(2)}</td>
+                    </tr>
+                `;
+            });
+            
+            printHTML += `
+                        </tbody>
+                    </table>
+                    
+                    <scr` + `ipt>
+                        window.onload = function() { window.print(); }
+                    </scr` + `ipt>
+                </body>
+                </html>
+            `;
+            
+            // Open print window
+            const printWindow = window.open('', '_blank');
+            if (printWindow) {
+                printWindow.document.write(printHTML);
+                printWindow.document.close();
+            } else {
+                showToast('Please allow popups to print', 'error');
+            }
+        }
+        
+        // Sync Warning Functions
+        function closeSyncWarning() {
+            document.getElementById('syncWarningModal').classList.remove('active');
+        }
+        
+        function closeSyncWarningOutside(event) {
+            if (event.target === event.currentTarget) {
+                closeSyncWarning();
+            }
+        }
+        
+        async function reloadFromFile() {
+            if (fileHandle) {
+                try {
+                    const file = await fileHandle.getFile();
+                    const contents = await file.text();
+                    parseAndLoadInventory(contents, file.name);
+                    closeSyncWarning();
+                    showToast('Loaded latest version', 'success');
+                } catch (err) {
+                    showToast('Error reloading: ' + err.message, 'error');
+                }
+            }
+        }
+        
+        async function checkForFileChanges() {
+            if (!fileHandle || !autoSaveEnabled) return;
+            
+            try {
+                const file = await fileHandle.getFile();
+                const currentModified = file.lastModified;
+                
+                if (lastFileModified && currentModified > lastFileModified) {
+                    document.getElementById('syncYourTime').textContent = new Date(lastFileModified).toLocaleString();
+                    document.getElementById('syncFileTime').textContent = new Date(currentModified).toLocaleString();
+                    document.getElementById('syncWarningModal').classList.add('active');
+                }
+                
+                lastFileModified = currentModified;
+            } catch (err) {
+                console.error('Error checking file:', err);
+            }
+        }
+        
+        // Check for file changes periodically
+        setInterval(checkForFileChanges, 30000); // Every 30 seconds
+
+        // ============================================================================
+        // SETTINGS
+        // ============================================================================
+        
+        function showSettings() {
+            // Update file connection status
+            const statusEl = document.getElementById('fileConnectionStatus');
+            if (autoSaveEnabled && fileHandle) {
+                const filename = localStorage.getItem('ccd_mobile_filename') || 'Unknown file';
+                statusEl.innerHTML = `<span style="color: var(--success);">✅ Connected to: ${filename}</span><br>Changes auto-save to this file.`;
+            } else {
+                statusEl.innerHTML = 'Not connected to a file. Changes save to browser only.';
+            }
+            
+            document.getElementById('settingsModal').classList.add('active');
+        }
+        
+        function closeSettings() {
+            document.getElementById('settingsModal').classList.remove('active');
+        }
+        
+        function closeSettingsOutside(event) {
+            if (event.target === event.currentTarget) {
+                closeSettings();
+            }
+        }
+        
+        function confirmClearData() {
+            if (confirm('Clear all local data? This cannot be undone.')) {
+                localStorage.removeItem('ccd_mobile_inventory');
+                localStorage.removeItem('ccd_mobile_sales');
+                localStorage.removeItem('ccd_mobile_last_loaded');
+                inventory = [];
+                salesHistory = [];
+                filteredInventory = [];
+                applyFilters();
+                updateStats();
+                closeSettings();
+                showToast('Local data cleared', 'success');
+            }
+        }
+
+        // ============================================================================
+        // TOAST
+        // ============================================================================
+        
+        function showToast(message, type = '') {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.className = 'toast ' + type;
+            toast.classList.add('show');
+            
+            setTimeout(() => {
+                toast.classList.remove('show');
+            }, 3000);
+        }
+
+        // ============================================================================
+        // INITIALIZATION
+        // ============================================================================
+        
+        document.addEventListener('DOMContentLoaded', function() {
+            // Check if already authenticated this session
+            const authenticated = sessionStorage.getItem('ccd_mobile_auth');
+            if (authenticated === 'true') {
+                document.getElementById('pinScreen').classList.add('hidden');
+                document.getElementById('appContainer').classList.add('active');
+                loadFromStorage();
+            }
+        });
+        
+        // Mark authenticated after successful PIN
+        function validatePin() {
+            if (enteredPin === pinCode) {
+                sessionStorage.setItem('ccd_mobile_auth', 'true');
+                document.getElementById('pinScreen').classList.add('hidden');
+                document.getElementById('appContainer').classList.add('active');
+                loadFromStorage();
+            } else {
+                const dots = document.querySelectorAll('.pin-dot');
+                dots.forEach(dot => dot.classList.add('error'));
+                document.getElementById('pinError').textContent = 'Incorrect PIN';
+                
+                setTimeout(() => {
+                    enteredPin = '';
+                    updatePinDots();
+                    document.getElementById('pinError').textContent = '';
+                }, 1000);
+            }
+        }
+        
+        // Warn before leaving with unsaved changes
+        window.addEventListener('beforeunload', function(e) {
+            if (hasUnsavedChanges) {
+                e.preventDefault();
+                e.returnValue = '';
+            }
+        });
+    </script>
+</body>
+</html>
