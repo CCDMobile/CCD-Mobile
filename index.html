@@ -1706,6 +1706,11 @@ Usage:
                 </div>
 
                 <div class="settings-section">
+                    <div class="settings-label">Debugging</div>
+                    <button class="settings-btn" onclick="showActivityLog()">📋 View Activity Log</button>
+                </div>
+
+                <div class="settings-section">
                     <div class="settings-label">About</div>
                     <p style="font-size: 14px; color: var(--text-light);">
                         CCD Mobile Inventory v2.0.0<br>
@@ -1716,6 +1721,25 @@ Usage:
             </div>
             <div class="quick-actions">
                 <button class="action-btn secondary" onclick="closeSettings()" style="grid-column: span 2;">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Activity Log Modal -->
+    <div class="modal-overlay" id="logModal" onclick="closeLogModalOutside(event)">
+        <div class="modal-content" onclick="event.stopPropagation()" style="max-height: 95vh;">
+            <div class="modal-header">
+                <div class="modal-handle"></div>
+                <h2 class="modal-title">📋 Activity Log</h2>
+            </div>
+            <div class="modal-body" style="max-height: 60vh; overflow-y: auto;">
+                <div id="logContent" style="font-family: monospace; font-size: 12px; white-space: pre-wrap; background: #f5f5f5; padding: 10px; border-radius: 8px;">
+                    Loading...
+                </div>
+            </div>
+            <div class="quick-actions">
+                <button class="action-btn secondary" onclick="closeLogModal()">Close</button>
+                <button class="action-btn primary" onclick="copyLog()">📋 Copy Log</button>
             </div>
         </div>
     </div>
@@ -3117,11 +3141,6 @@ Usage:
             
             markUnsaved();
             
-            // AUTO-SAVE to OneDrive immediately after marking sold
-            if (isConnected) {
-                saveToOneDrive();
-            }
-            
             closeSoldModal();
             closeModal();
             
@@ -3134,7 +3153,19 @@ Usage:
             updateStats();
             
             const profitMsg = netProfit >= 0 ? `+$${(netProfit * soldQty).toFixed(2)}` : `-$${Math.abs(netProfit * soldQty).toFixed(2)}`;
-            showToast(`Sale recorded! ${CHANNEL_NAMES[soldChannel]} × ${soldQty} (${profitMsg})`, 'success');
+            
+            // AUTO-SAVE to OneDrive immediately after marking sold
+            if (isConnected) {
+                showToast(`Sale recorded! Saving to OneDrive...`, 'success');
+                saveToOneDrive().then(success => {
+                    if (!success) {
+                        logActivity('AUTO_SAVE_FAILED_AFTER_SALE', { sku: selectedItem?.sku });
+                    }
+                });
+            } else {
+                showToast(`Sale recorded! ${CHANNEL_NAMES[soldChannel]} × ${soldQty} (${profitMsg}) - NOT SYNCED`, 'warning');
+                logActivity('SALE_NOT_SYNCED', { reason: 'Not connected to OneDrive' });
+            }
         }
 
         // ============================================================================
@@ -4322,6 +4353,52 @@ Usage:
                 closeSettings();
                 showToast('Local data cleared', 'success');
             }
+        }
+
+        // ============================================================================
+        // ACTIVITY LOG VIEWER
+        // ============================================================================
+        
+        function showActivityLog() {
+            const logContent = document.getElementById('logContent');
+            
+            if (activityLog.length === 0) {
+                logContent.textContent = 'No activity logged yet.';
+            } else {
+                // Show most recent first, formatted nicely
+                const formatted = activityLog.slice().reverse().map(entry => {
+                    const time = new Date(entry.timestamp).toLocaleString();
+                    const details = JSON.stringify(entry.details, null, 2);
+                    return `[${time}]\n${entry.action}\n${details}\n${'─'.repeat(30)}`;
+                }).join('\n\n');
+                
+                logContent.textContent = formatted;
+            }
+            
+            closeSettings();
+            document.getElementById('logModal').classList.add('active');
+        }
+        
+        function closeLogModal() {
+            document.getElementById('logModal').classList.remove('active');
+        }
+        
+        function closeLogModalOutside(event) {
+            if (event.target === event.currentTarget) {
+                closeLogModal();
+            }
+        }
+        
+        function copyLog() {
+            const logText = activityLog.slice().reverse().map(entry => {
+                return `[${entry.timestamp}] ${entry.action}: ${JSON.stringify(entry.details)}`;
+            }).join('\n');
+            
+            navigator.clipboard.writeText(logText).then(() => {
+                showToast('Log copied to clipboard!', 'success');
+            }).catch(() => {
+                showToast('Failed to copy log', 'error');
+            });
         }
 
         // ============================================================================
