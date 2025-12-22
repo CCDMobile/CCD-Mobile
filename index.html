@@ -1985,24 +1985,10 @@ Usage:
                     scopes: ['Files.ReadWrite', 'User.Read']
                 };
                 
-                // Try popup first (works better on mobile)
-                try {
-                    const response = await msalInstance.loginPopup(loginRequest);
-                    accessToken = response.accessToken;
-                    isConnected = true;
-                    
-                    updateConnectionUI();
-                    await loadFromOneDrive();
-                    startAutoSync();
-                    
-                    hideLoading();
-                    closeSettings();
-                    showToast('Connected to OneDrive!', 'success');
-                } catch (popupError) {
-                    console.log('Popup failed, trying redirect:', popupError);
-                    // Fall back to redirect
-                    await msalInstance.loginRedirect(loginRequest);
-                }
+                // Use redirect for Safari (popups are blocked)
+                // This will redirect to Microsoft login, then back to this page
+                await msalInstance.loginRedirect(loginRequest);
+                
             } catch (error) {
                 hideLoading();
                 console.error('Login error:', error);
