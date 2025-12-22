@@ -1838,6 +1838,10 @@ Usage:
         let notFoundItems = {}; // Track not found items by ID
         let tmReportWeek = ''; // Track which week the verification is for
         
+        // Activity Log
+        let activityLog = [];
+        const MAX_LOG_ENTRIES = 500; // Keep last 500 entries
+        
         const CHANNELS = ['etsy', 'wix', 'wayfair', 'treasuremarts'];
         const CHANNEL_NAMES = {
             etsy: 'Etsy',
@@ -1851,6 +1855,48 @@ Usage:
             wayfair: '🛋️',
             treasuremarts: '💎'
         };
+
+        // ============================================================================
+        // ACTIVITY LOGGING
+        // ============================================================================
+        
+        function logActivity(action, details = {}) {
+            const entry = {
+                timestamp: new Date().toISOString(),
+                action: action,
+                details: details,
+                device: 'mobile',
+                userAgent: navigator.userAgent.substring(0, 100)
+            };
+            
+            activityLog.push(entry);
+            
+            // Keep only last MAX_LOG_ENTRIES
+            if (activityLog.length > MAX_LOG_ENTRIES) {
+                activityLog = activityLog.slice(-MAX_LOG_ENTRIES);
+            }
+            
+            // Save to localStorage as backup
+            try {
+                localStorage.setItem('ccd_mobile_log', JSON.stringify(activityLog));
+            } catch (e) {
+                console.error('Failed to save log to localStorage:', e);
+            }
+            
+            console.log(`[LOG] ${action}:`, details);
+        }
+        
+        function loadLogFromStorage() {
+            try {
+                const saved = localStorage.getItem('ccd_mobile_log');
+                if (saved) {
+                    activityLog = JSON.parse(saved);
+                }
+            } catch (e) {
+                console.error('Failed to load log from localStorage:', e);
+                activityLog = [];
+            }
+        }
 
         // ============================================================================
         // PIN AUTHENTICATION
@@ -1917,6 +1963,7 @@ Usage:
             pinCode = newPin;
             localStorage.setItem('ccd_mobile_pin', pinCode);
             document.getElementById('newPinInput').value = '';
+            logActivity('PIN_CHANGED', {});
             showToast('PIN updated successfully', 'success');
         }
 
@@ -1925,9 +1972,12 @@ Usage:
         // ============================================================================
         
         async function initializeMsal() {
+            logActivity('MSAL_INIT_START', {});
+            
             try {
                 // Check if MSAL library loaded
                 if (typeof msal === 'undefined') {
+                    logActivity('MSAL_INIT_FAILED', { reason: 'Library not loaded' });
                     console.error('MSAL library not loaded');
                     showToast('OneDrive library failed to load. Try refreshing.', 'error');
                     return;
@@ -1939,9 +1989,10 @@ Usage:
                 // Handle redirect response
                 const response = await msalInstance.handleRedirectPromise();
                 if (response) {
+                    logActivity('MSAL_REDIRECT_SUCCESS', {});
                     accessToken = response.accessToken;
                     isConnected = true;
-                    updateConnectionUI();
+                    updateConnectionUI();;
                     await loadFromOneDrive();
                     startAutoSync();
                 } else {
@@ -2053,8 +2104,11 @@ Usage:
         // ============================================================================
         
         async function loadFromOneDrive() {
+            logActivity('LOAD_START', { source: 'OneDrive' });
+            
             const token = await getAccessToken();
             if (!token) {
+                logActivity('LOAD_FAILED', { reason: 'No access token' });
                 showToast('Not connected to OneDrive', 'error');
                 return false;
             }
@@ -2089,6 +2143,12 @@ Usage:
                 
                 salesHistory = data.salesHistory || [];
                 
+                logActivity('LOAD_SUCCESS', { 
+                    itemCount: inventory.length, 
+                    salesCount: salesHistory.length,
+                    lastModified: data.lastModified || 'unknown'
+                });
+                
                 // Save to local storage as backup
                 localStorage.setItem('ccd_mobile_inventory', JSON.stringify(inventory));
                 localStorage.setItem('ccd_mobile_sales', JSON.stringify(salesHistory));
@@ -2119,8 +2179,14 @@ Usage:
         }
 
         async function saveToOneDrive() {
+            logActivity('SAVE_START', { 
+                itemCount: inventory.length, 
+                salesCount: salesHistory.length 
+            });
+            
             const token = await getAccessToken();
             if (!token) {
+                logActivity('SAVE_FAILED', { reason: 'No access token' });
                 showToast('Not connected to OneDrive. Connect first in Settings.', 'error');
                 return false;
             }
@@ -2132,6 +2198,7 @@ Usage:
                 const data = {
                     inventory: inventory,
                     salesHistory: salesHistory,
+                    activityLog: activityLog, // Include activity log in save
                     lastModified: new Date().toISOString(),
                     modifiedBy: 'CCD Mobile'
                 };
@@ -2152,6 +2219,11 @@ Usage:
                     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
                 }
                 
+                logActivity('SAVE_SUCCESS', { 
+                    itemCount: inventory.length,
+                    salesCount: salesHistory.length
+                });
+                
                 hasUnsavedChanges = false;
                 document.getElementById('unsavedBadge').classList.remove('visible');
                 
@@ -2164,6 +2236,7 @@ Usage:
                 showToast('Saved to OneDrive!', 'success');
                 return true;
             } catch (error) {
+                logActivity('SAVE_FAILED', { error: error.message });
                 console.error('Save to OneDrive error:', error);
                 hideLoading();
                 updateSyncStatus('error', 'Save failed');
@@ -3000,7 +3073,23 @@ Usage:
                 recordedFrom: 'mobile'
             });
             
+            // Log the sale
+            logActivity('ITEM_SOLD', {
+                itemId: selectedItem.id,
+                sku: selectedItem.sku,
+                productName: selectedItem.productName,
+                channel: soldChannel,
+                qty: soldQty,
+                price: salePrice,
+                newQty: selectedItem.qty
+            });
+            
             markUnsaved();
+            
+            // AUTO-SAVE to OneDrive immediately after marking sold
+            if (isConnected) {
+                saveToOneDrive();
+            }
             
             closeSoldModal();
             closeModal();
@@ -4224,11 +4313,17 @@ Usage:
         // ============================================================================
         
         document.addEventListener('DOMContentLoaded', function() {
+            // Load activity log from localStorage
+            loadLogFromStorage();
+            logActivity('APP_OPENED', { url: window.location.href });
+            
             // Check if already authenticated this session
             const authenticated = sessionStorage.getItem('ccd_mobile_auth');
             if (authenticated === 'true') {
                 document.getElementById('pinScreen').classList.add('hidden');
                 document.getElementById('appContainer').classList.add('active');
+                
+                logActivity('SESSION_RESUMED', {});
                 
                 // Initialize MSAL and try to auto-connect
                 initializeMsal().then(() => {
