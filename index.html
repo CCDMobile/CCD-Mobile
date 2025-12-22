@@ -2195,10 +2195,10 @@ Usage:
             updateSyncStatus('syncing', 'Saving...');
             
             try {
+                // Save inventory data (without activity log)
                 const data = {
                     inventory: inventory,
                     salesHistory: salesHistory,
-                    activityLog: activityLog, // Include activity log in save
                     lastModified: new Date().toISOString(),
                     modifiedBy: 'CCD Mobile'
                 };
@@ -2218,6 +2218,9 @@ Usage:
                 if (!response.ok) {
                     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
                 }
+                
+                // Save activity log to separate file
+                await saveActivityLog(token);
                 
                 logActivity('SAVE_SUCCESS', { 
                     itemCount: inventory.length,
@@ -2242,6 +2245,34 @@ Usage:
                 updateSyncStatus('error', 'Save failed');
                 showToast('Failed to save: ' + error.message, 'error');
                 return false;
+            }
+        }
+
+        // Save activity log to separate file
+        const ONEDRIVE_LOG_PATH = '/Country Charm/New Database/Live Data Base/Master JSON/ccd-mobile-activity-log.json';
+        
+        async function saveActivityLog(token) {
+            try {
+                const logData = {
+                    activityLog: activityLog,
+                    lastUpdated: new Date().toISOString(),
+                    device: 'mobile'
+                };
+                
+                await fetch(
+                    `https://graph.microsoft.com/v1.0/me/drive/root:${ONEDRIVE_LOG_PATH}:/content`,
+                    {
+                        method: 'PUT',
+                        headers: {
+                            'Authorization': `Bearer ${token}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(logData, null, 2)
+                    }
+                );
+            } catch (error) {
+                console.error('Failed to save activity log:', error);
+                // Don't throw - log save failure shouldn't break main save
             }
         }
 
