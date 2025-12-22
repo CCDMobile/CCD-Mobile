@@ -1926,6 +1926,13 @@ Usage:
         
         async function initializeMsal() {
             try {
+                // Check if MSAL library loaded
+                if (typeof msal === 'undefined') {
+                    console.error('MSAL library not loaded');
+                    showToast('OneDrive library failed to load. Try refreshing.', 'error');
+                    return;
+                }
+                
                 msalInstance = new msal.PublicClientApplication(MSAL_CONFIG);
                 await msalInstance.initialize();
                 
@@ -1955,6 +1962,8 @@ Usage:
                             console.log('Silent token acquisition failed, user needs to sign in');
                             loadFromStorage();
                         }
+                    } else {
+                        loadFromStorage();
                     }
                 }
             } catch (error) {
@@ -1964,6 +1973,12 @@ Usage:
         }
 
         async function connectToOneDrive() {
+            // Check if MSAL is ready
+            if (!msalInstance) {
+                showToast('OneDrive not ready. Try refreshing the page.', 'error');
+                return;
+            }
+            
             showLoading('Connecting to OneDrive...');
             try {
                 const loginRequest = {
@@ -2212,28 +2227,32 @@ Usage:
         // ============================================================================
         
         function updateConnectionUI() {
-            const statusDiv = document.getElementById('connectionStatus');
-            const iconSpan = document.getElementById('connectionIcon');
-            const textSpan = document.getElementById('connectionText');
-            const connectBtn = document.getElementById('connectBtn');
-            const disconnectBtn = document.getElementById('disconnectBtn');
-            
-            if (isConnected) {
-                statusDiv.className = 'connection-status connected';
-                iconSpan.textContent = '🟢';
-                textSpan.textContent = 'Connected to OneDrive';
-                connectBtn.style.display = 'none';
-                disconnectBtn.style.display = 'block';
-            } else {
-                statusDiv.className = 'connection-status disconnected';
-                iconSpan.textContent = '🔴';
-                textSpan.textContent = 'Not connected';
-                connectBtn.style.display = 'block';
-                disconnectBtn.style.display = 'none';
+            try {
+                const statusDiv = document.getElementById('connectionStatus');
+                const iconSpan = document.getElementById('connectionIcon');
+                const textSpan = document.getElementById('connectionText');
+                const connectBtn = document.getElementById('connectBtn');
+                const disconnectBtn = document.getElementById('disconnectBtn');
+                
+                if (isConnected) {
+                    if (statusDiv) statusDiv.className = 'connection-status connected';
+                    if (iconSpan) iconSpan.textContent = '🟢';
+                    if (textSpan) textSpan.textContent = 'Connected to OneDrive';
+                    if (connectBtn) connectBtn.style.display = 'none';
+                    if (disconnectBtn) disconnectBtn.style.display = 'block';
+                } else {
+                    if (statusDiv) statusDiv.className = 'connection-status disconnected';
+                    if (iconSpan) iconSpan.textContent = '🔴';
+                    if (textSpan) textSpan.textContent = 'Not connected';
+                    if (connectBtn) connectBtn.style.display = 'block';
+                    if (disconnectBtn) disconnectBtn.style.display = 'none';
+                }
+                
+                updateSyncStatus(isConnected ? 'connected' : 'disconnected', 
+                                isConnected ? 'Connected' : 'Not connected');
+            } catch (error) {
+                console.error('updateConnectionUI error:', error);
             }
-            
-            updateSyncStatus(isConnected ? 'connected' : 'disconnected', 
-                            isConnected ? 'Connected' : 'Not connected');
         }
 
         function updateSyncStatus(status, text) {
@@ -4158,15 +4177,20 @@ Usage:
         // ============================================================================
         
         function showSettings() {
-            // Update connection status display
-            updateConnectionUI();
-            
-            // Update last sync time
-            if (lastSyncTime) {
-                document.getElementById('lastSyncDate').textContent = formatTime(lastSyncTime);
+            try {
+                // Update connection status display
+                updateConnectionUI();
+                
+                // Update last sync time
+                if (lastSyncTime) {
+                    document.getElementById('lastSyncDate').textContent = formatTime(lastSyncTime);
+                }
+                
+                document.getElementById('settingsModal').classList.add('active');
+            } catch (error) {
+                alert('Settings error: ' + error.message);
+                console.error('Settings error:', error);
             }
-            
-            document.getElementById('settingsModal').classList.add('active');
         }
         
         function closeSettings() {
