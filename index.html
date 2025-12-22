@@ -4158,13 +4158,12 @@ Usage:
         // ============================================================================
         
         function showSettings() {
-            // Update file connection status
-            const statusEl = document.getElementById('fileConnectionStatus');
-            if (autoSaveEnabled && fileHandle) {
-                const filename = localStorage.getItem('ccd_mobile_filename') || 'Unknown file';
-                statusEl.innerHTML = `<span style="color: var(--success);">✅ Connected to: ${filename}</span><br>Changes auto-save to this file.`;
-            } else {
-                statusEl.innerHTML = 'Not connected to a file. Changes save to browser only.';
+            // Update connection status display
+            updateConnectionUI();
+            
+            // Update last sync time
+            if (lastSyncTime) {
+                document.getElementById('lastSyncDate').textContent = formatTime(lastSyncTime);
             }
             
             document.getElementById('settingsModal').classList.add('active');
@@ -4184,7 +4183,7 @@ Usage:
             if (confirm('Clear all local data? This cannot be undone.')) {
                 localStorage.removeItem('ccd_mobile_inventory');
                 localStorage.removeItem('ccd_mobile_sales');
-                localStorage.removeItem('ccd_mobile_last_loaded');
+                localStorage.removeItem('ccd_mobile_last_sync');
                 inventory = [];
                 salesHistory = [];
                 filteredInventory = [];
