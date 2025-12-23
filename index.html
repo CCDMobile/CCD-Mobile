@@ -1828,13 +1828,21 @@ Usage:
 
         const ONEDRIVE_FILE_PATH = '/Country Charm/New Database/Live Data Base/Master JSON/ccd-inventory-MASTER.json';
         const AUTO_SYNC_INTERVAL = 30000; // 30 seconds
+        const TOKEN_CHECK_INTERVAL = 60000; // Check token health every 60 seconds
+        const TOKEN_WARNING_THRESHOLD = 300000; // Warn 5 minutes before expiry
 
         // MSAL instance
         let msalInstance = null;
         let accessToken = null;
+        let tokenExpiresAt = null; // Track token expiration
         let isConnected = false;
         let lastSyncTime = null;
         let autoSyncTimer = null;
+        let tokenCheckTimer = null;
+
+        // Offline Queue - stores changes when disconnected
+        let offlineQueue = [];
+        let isOffline = false;
 
         // ============================================================================
         // STATE
@@ -2015,10 +2023,20 @@ Usage:
                 if (response) {
                     logActivity('MSAL_REDIRECT_SUCCESS', {});
                     accessToken = response.accessToken;
+                    tokenExpiresAt = response.expiresOn;
                     isConnected = true;
-                    updateConnectionUI();;
+                    isOffline = false;
+                    
+                    hideTokenWarningBanner();
+                    updateConnectionUI();
                     await loadFromOneDrive();
                     startAutoSync();
+                    startTokenHealthCheck();
+                    
+                    // Sync any queued offline changes
+                    if (offlineQueue.length > 0) {
+                        setTimeout(syncOfflineQueue, 1000);
+                    }
                 } else {
                     // Check for existing account
                     const accounts = msalInstance.getAllAccounts();
@@ -2029,13 +2047,29 @@ Usage:
                                 account: accounts[0]
                             });
                             accessToken = silentResult.accessToken;
+                            tokenExpiresAt = silentResult.expiresOn;
                             isConnected = true;
+                            isOffline = false;
+                            
+                            hideTokenWarningBanner();
                             updateConnectionUI();
                             await loadFromOneDrive();
                             startAutoSync();
+                            startTokenHealthCheck();
+                            
+                            // Sync any queued offline changes
+                            if (offlineQueue.length > 0) {
+                                setTimeout(syncOfflineQueue, 1000);
+                            }
                         } catch (e) {
                             console.log('Silent token acquisition failed, user needs to sign in');
+                            isOffline = true;
                             loadFromStorage();
+                            
+                            // Show banner if there are queued changes
+                            if (offlineQueue.length > 0) {
+                                showTokenExpiredBanner();
+                            }
                         }
                     } else {
                         loadFromStorage();
@@ -2133,6 +2167,308 @@ Usage:
                 updateConnectionUI();
                 return null;
             }
+        }
+
+        // ============================================================================
+        // TOKEN HEALTH CHECK & OFFLINE QUEUE
+        // ============================================================================
+        
+        /**
+         * Start monitoring token health - warns before expiration
+         */
+        function startTokenHealthCheck() {
+            // Clear any existing timer
+            if (tokenCheckTimer) {
+                clearInterval(tokenCheckTimer);
+            }
+            
+            tokenCheckTimer = setInterval(checkTokenHealth, TOKEN_CHECK_INTERVAL);
+            console.log('🔒 Token health monitoring started');
+        }
+        
+        /**
+         * Stop token health monitoring
+         */
+        function stopTokenHealthCheck() {
+            if (tokenCheckTimer) {
+                clearInterval(tokenCheckTimer);
+                tokenCheckTimer = null;
+            }
+        }
+        
+        /**
+         * Check if token is about to expire and warn user
+         */
+        async function checkTokenHealth() {
+            if (!isConnected || !msalInstance) return;
+            
+            const accounts = msalInstance.getAllAccounts();
+            if (accounts.length === 0) {
+                handleTokenExpired();
+                return;
+            }
+            
+            try {
+                // Try to get token silently - this will tell us if it's still valid
+                const response = await msalInstance.acquireTokenSilent({
+                    scopes: ['Files.ReadWrite', 'User.Read'],
+                    account: accounts[0]
+                });
+                
+                // Token is still valid
+                accessToken = response.accessToken;
+                
+                // Check expiration time
+                if (response.expiresOn) {
+                    const now = new Date();
+                    const expiresAt = new Date(response.expiresOn);
+                    const timeUntilExpiry = expiresAt - now;
+                    
+                    tokenExpiresAt = expiresAt;
+                    
+                    // Warn if expiring within threshold
+                    if (timeUntilExpiry < TOKEN_WARNING_THRESHOLD && timeUntilExpiry > 0) {
+                        const minutesLeft = Math.round(timeUntilExpiry / 60000);
+                        showTokenWarning(minutesLeft);
+                    }
+                    
+                    // Update connection status display
+                    updateTokenStatus(timeUntilExpiry);
+                }
+                
+                // If we were offline and now have a valid token, sync queued changes
+                if (isOffline && offlineQueue.length > 0) {
+                    isOffline = false;
+                    await syncOfflineQueue();
+                }
+                
+            } catch (error) {
+                console.log('Token health check failed:', error.message);
+                if (error.name === 'InteractionRequiredAuthError') {
+                    handleTokenExpired();
+                }
+            }
+        }
+        
+        /**
+         * Handle token expiration
+         */
+        function handleTokenExpired() {
+            isConnected = false;
+            isOffline = true;
+            accessToken = null;
+            tokenExpiresAt = null;
+            
+            updateConnectionUI();
+            showTokenExpiredBanner();
+            
+            logActivity('TOKEN_EXPIRED_AUTO', { queuedChanges: offlineQueue.length });
+        }
+        
+        /**
+         * Show warning that token is about to expire
+         */
+        function showTokenWarning(minutesLeft) {
+            const banner = document.getElementById('tokenWarningBanner');
+            if (banner) {
+                banner.innerHTML = `⚠️ Session expires in ${minutesLeft} min - <a href="#" onclick="connectToOneDrive(); return false;" style="color: white; font-weight: bold;">Tap to Reconnect</a>`;
+                banner.style.display = 'block';
+            } else {
+                // Create banner if it doesn't exist
+                createTokenWarningBanner();
+                showTokenWarning(minutesLeft);
+            }
+        }
+        
+        /**
+         * Show banner that token has expired
+         */
+        function showTokenExpiredBanner() {
+            let banner = document.getElementById('tokenWarningBanner');
+            if (!banner) {
+                createTokenWarningBanner();
+                banner = document.getElementById('tokenWarningBanner');
+            }
+            
+            banner.innerHTML = `🔴 Disconnected - Changes saving locally. <a href="#" onclick="connectToOneDrive(); return false;" style="color: white; font-weight: bold;">Tap to Reconnect</a>`;
+            banner.style.display = 'block';
+            banner.style.background = '#dc3545';
+            
+            // Also show pending count if there are queued changes
+            if (offlineQueue.length > 0) {
+                banner.innerHTML += ` <span style="background: white; color: #dc3545; padding: 2px 8px; border-radius: 10px; margin-left: 8px;">${offlineQueue.length} pending</span>`;
+            }
+        }
+        
+        /**
+         * Create the token warning banner element
+         */
+        function createTokenWarningBanner() {
+            const banner = document.createElement('div');
+            banner.id = 'tokenWarningBanner';
+            banner.style.cssText = `
+                display: none;
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                background: #ffc107;
+                color: #000;
+                padding: 10px 15px;
+                text-align: center;
+                font-size: 13px;
+                z-index: 10001;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            `;
+            document.body.prepend(banner);
+        }
+        
+        /**
+         * Hide the token warning banner
+         */
+        function hideTokenWarningBanner() {
+            const banner = document.getElementById('tokenWarningBanner');
+            if (banner) {
+                banner.style.display = 'none';
+            }
+        }
+        
+        /**
+         * Update token status in the UI
+         */
+        function updateTokenStatus(timeUntilExpiry) {
+            const statusEl = document.getElementById('tokenStatus');
+            if (!statusEl) return;
+            
+            if (timeUntilExpiry > TOKEN_WARNING_THRESHOLD) {
+                statusEl.textContent = '🟢 Connected';
+                statusEl.style.color = '#28a745';
+            } else if (timeUntilExpiry > 0) {
+                const mins = Math.round(timeUntilExpiry / 60000);
+                statusEl.textContent = `🟡 Expires in ${mins}m`;
+                statusEl.style.color = '#ffc107';
+            } else {
+                statusEl.textContent = '🔴 Expired';
+                statusEl.style.color = '#dc3545';
+            }
+        }
+        
+        // ============================================================================
+        // OFFLINE QUEUE MANAGEMENT
+        // ============================================================================
+        
+        /**
+         * Add a change to the offline queue
+         */
+        function queueOfflineChange(changeType, data) {
+            const change = {
+                id: Date.now(),
+                type: changeType,
+                data: data,
+                timestamp: new Date().toISOString()
+            };
+            
+            offlineQueue.push(change);
+            saveOfflineQueue();
+            updateOfflineIndicator();
+            
+            logActivity('OFFLINE_QUEUE_ADD', { 
+                changeType: changeType, 
+                queueLength: offlineQueue.length 
+            });
+            
+            console.log(`📦 Queued offline change: ${changeType} (${offlineQueue.length} pending)`);
+        }
+        
+        /**
+         * Save offline queue to localStorage
+         */
+        function saveOfflineQueue() {
+            try {
+                localStorage.setItem('ccd_mobile_offline_queue', JSON.stringify(offlineQueue));
+            } catch (e) {
+                console.error('Failed to save offline queue:', e);
+            }
+        }
+        
+        /**
+         * Load offline queue from localStorage
+         */
+        function loadOfflineQueue() {
+            try {
+                const saved = localStorage.getItem('ccd_mobile_offline_queue');
+                if (saved) {
+                    offlineQueue = JSON.parse(saved);
+                    if (offlineQueue.length > 0) {
+                        updateOfflineIndicator();
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to load offline queue:', e);
+                offlineQueue = [];
+            }
+        }
+        
+        /**
+         * Sync offline queue when connection is restored
+         */
+        async function syncOfflineQueue() {
+            if (offlineQueue.length === 0) return;
+            
+            logActivity('OFFLINE_SYNC_START', { queueLength: offlineQueue.length });
+            showToast(`Syncing ${offlineQueue.length} offline changes...`, 'info');
+            
+            // The changes are already applied to inventory/salesHistory in memory
+            // We just need to save to OneDrive
+            const success = await saveToOneDrive();
+            
+            if (success) {
+                const syncedCount = offlineQueue.length;
+                offlineQueue = [];
+                saveOfflineQueue();
+                updateOfflineIndicator();
+                hideTokenWarningBanner();
+                
+                logActivity('OFFLINE_SYNC_SUCCESS', { syncedCount: syncedCount });
+                showToast(`✅ Synced ${syncedCount} offline changes!`, 'success');
+            } else {
+                logActivity('OFFLINE_SYNC_FAILED', { queueLength: offlineQueue.length });
+                showToast('Failed to sync offline changes. Will retry...', 'error');
+            }
+        }
+        
+        /**
+         * Update the offline indicator in the UI
+         */
+        function updateOfflineIndicator() {
+            let indicator = document.getElementById('offlineIndicator');
+            
+            if (offlineQueue.length === 0) {
+                if (indicator) indicator.style.display = 'none';
+                return;
+            }
+            
+            if (!indicator) {
+                indicator = document.createElement('div');
+                indicator.id = 'offlineIndicator';
+                indicator.style.cssText = `
+                    position: fixed;
+                    bottom: 70px;
+                    right: 15px;
+                    background: #dc3545;
+                    color: white;
+                    padding: 8px 12px;
+                    border-radius: 20px;
+                    font-size: 12px;
+                    font-weight: 600;
+                    z-index: 1000;
+                    box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+                `;
+                document.body.appendChild(indicator);
+            }
+            
+            indicator.textContent = `📤 ${offlineQueue.length} pending`;
+            indicator.style.display = 'block';
         }
 
         // ============================================================================
@@ -3233,16 +3569,35 @@ Usage:
             const profitMsg = netProfit >= 0 ? `+$${(netProfit * soldQty).toFixed(2)}` : `-$${Math.abs(netProfit * soldQty).toFixed(2)}`;
             
             // AUTO-SAVE to OneDrive immediately after marking sold
-            if (isConnected) {
+            if (isConnected && !isOffline) {
                 showToast(`Sale recorded! Saving to OneDrive...`, 'success');
                 saveToOneDrive().then(success => {
                     if (!success) {
+                        // Save failed - queue for later
+                        queueOfflineChange('SALE', {
+                            itemId: selectedItem?.id,
+                            sku: selectedItem?.sku,
+                            channel: soldChannel,
+                            qty: soldQty,
+                            price: salePrice
+                        });
                         logActivity('AUTO_SAVE_FAILED_AFTER_SALE', { sku: selectedItem?.sku });
                     }
                 });
             } else {
-                showToast(`Sale recorded! ${CHANNEL_NAMES[soldChannel]} × ${soldQty} (${profitMsg}) - NOT SYNCED`, 'warning');
-                logActivity('SALE_NOT_SYNCED', { reason: 'Not connected to OneDrive' });
+                // Offline - queue the change
+                queueOfflineChange('SALE', {
+                    itemId: selectedItem?.id,
+                    sku: selectedItem?.sku,
+                    channel: soldChannel,
+                    qty: soldQty,
+                    price: salePrice
+                });
+                showToast(`📤 Sale queued (offline) - ${CHANNEL_NAMES[soldChannel]} × ${soldQty}`, 'warning');
+                logActivity('SALE_QUEUED_OFFLINE', { 
+                    sku: selectedItem?.sku,
+                    queueLength: offlineQueue.length 
+                });
             }
         }
 
@@ -4501,6 +4856,13 @@ Usage:
         document.addEventListener('DOMContentLoaded', function() {
             // Load activity log from localStorage
             loadLogFromStorage();
+            
+            // Load offline queue
+            loadOfflineQueue();
+            
+            // Create token warning banner element
+            createTokenWarningBanner();
+            
             logActivity('APP_OPENED', { url: window.location.href });
             
             // Check if already authenticated this session
@@ -4516,6 +4878,16 @@ Usage:
                     if (!isConnected) {
                         loadFromStorage();
                     }
+                    
+                    // Start token health monitoring
+                    if (isConnected) {
+                        startTokenHealthCheck();
+                        
+                        // Check if there are queued offline changes to sync
+                        if (offlineQueue.length > 0) {
+                            setTimeout(syncOfflineQueue, 2000);
+                        }
+                    }
                 });
             }
             
@@ -4527,9 +4899,9 @@ Usage:
             }
         });
         
-        // Warn before leaving with unsaved changes
+        // Warn before leaving with unsaved changes or offline queue
         window.addEventListener('beforeunload', function(e) {
-            if (hasUnsavedChanges) {
+            if (hasUnsavedChanges || offlineQueue.length > 0) {
                 e.preventDefault();
                 e.returnValue = '';
             }
