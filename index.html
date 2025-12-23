@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
 ================================================================================
-CCD MOBILE INVENTORY MODULE v2.1.0 - OneDrive Sync Edition
+CCD MOBILE INVENTORY MODULE v2.1.1 - OneDrive Sync Edition
 ================================================================================
 A lightweight, mobile-optimized inventory management tool.
 Real-time sync with OneDrive - works in Safari!
@@ -1095,7 +1095,7 @@ Usage:
         /* Quick Actions */
         .quick-actions {
             display: grid;
-            grid-template-columns: 1fr 1fr;
+            grid-template-columns: 1fr 1fr 1fr;
             gap: 12px;
             padding: 20px;
             border-top: 1px solid var(--border);
@@ -1580,6 +1580,7 @@ Usage:
             </div>
             <div class="quick-actions">
                 <button class="action-btn secondary" onclick="closeModal()">Close</button>
+                <button class="action-btn primary" onclick="saveChangesFromModal()">💾 Save</button>
                 <button class="action-btn success" onclick="showMarkSold()">🏷️ Mark Sold</button>
             </div>
         </div>
@@ -1689,7 +1690,7 @@ Usage:
                 <div class="settings-section">
                     <div class="settings-label">About</div>
                     <p style="font-size: 14px; color: var(--text-light);">
-                        CCD Mobile Inventory v2.1.0<br>
+                        CCD Mobile Inventory v2.1.1<br>
                         OneDrive Sync Edition<br>
                         Last synced: <span id="lastSyncDate">Never</span>
                     </p>
@@ -2485,7 +2486,7 @@ Usage:
                     inventory: inventory,
                     salesHistory: salesHistory,
                     lastModified: new Date().toISOString(),
-                    modifiedBy: 'CCD Mobile v2.1.0'
+                    modifiedBy: 'CCD Mobile v2.1.1'
                 };
                 
                 const response = await fetch(
@@ -3181,6 +3182,29 @@ Usage:
             }
             
             markUnsaved();
+        }
+        
+        async function saveChangesFromModal() {
+            if (!hasUnsavedChanges) {
+                showToast('No changes to save', '');
+                return;
+            }
+            
+            if (isConnected && !isOffline) {
+                const success = await saveToOneDrive();
+                if (success) {
+                    closeModal();
+                }
+            } else {
+                // Save locally and queue
+                saveToStorage();
+                queueOfflineChange('ALLOCATION_CHANGE', {
+                    itemId: selectedItem?.id,
+                    sku: selectedItem?.sku
+                });
+                showToast('📤 Changes saved locally (offline)', 'warning');
+                closeModal();
+            }
         }
 
         // ============================================================================
