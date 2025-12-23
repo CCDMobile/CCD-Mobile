@@ -2091,10 +2091,16 @@ Usage:
         }
 
         async function getAccessToken() {
-            if (!msalInstance) return null;
+            if (!msalInstance) {
+                logActivity('TOKEN_FAILED', { reason: 'MSAL not initialized' });
+                return null;
+            }
             
             const accounts = msalInstance.getAllAccounts();
-            if (accounts.length === 0) return null;
+            if (accounts.length === 0) {
+                logActivity('TOKEN_FAILED', { reason: 'No accounts found' });
+                return null;
+            }
             
             try {
                 const response = await msalInstance.acquireTokenSilent({
@@ -2102,23 +2108,29 @@ Usage:
                     account: accounts[0]
                 });
                 accessToken = response.accessToken;
+                isConnected = true;
                 return accessToken;
             } catch (error) {
                 console.error('Token refresh error:', error);
+                logActivity('TOKEN_REFRESH_ERROR', { 
+                    errorName: error.name, 
+                    errorMessage: error.message 
+                });
+                
                 if (error.name === 'InteractionRequiredAuthError') {
-                    try {
-                        const response = await msalInstance.acquireTokenPopup({
-                            scopes: ['Files.ReadWrite', 'User.Read']
-                        });
-                        accessToken = response.accessToken;
-                        return accessToken;
-                    } catch (popupError) {
-                        console.error('Interactive token acquisition failed:', popupError);
-                        isConnected = false;
-                        updateConnectionUI();
-                        return null;
-                    }
+                    // Token expired - need to re-authenticate
+                    // Use redirect instead of popup (Safari blocks popups)
+                    showToast('Session expired. Please reconnect to OneDrive.', 'warning');
+                    isConnected = false;
+                    updateConnectionUI();
+                    
+                    // Store that we need to re-auth so user knows to tap Connect
+                    logActivity('TOKEN_EXPIRED', { reason: 'Interaction required - user must reconnect' });
+                    return null;
                 }
+                
+                isConnected = false;
+                updateConnectionUI();
                 return null;
             }
         }
@@ -2210,8 +2222,13 @@ Usage:
             
             const token = await getAccessToken();
             if (!token) {
-                logActivity('SAVE_FAILED', { reason: 'No access token' });
-                showToast('Not connected to OneDrive. Connect first in Settings.', 'error');
+                logActivity('SAVE_FAILED', { reason: 'No access token - session may have expired' });
+                showToast('⚠️ Not connected! Tap Settings → Connect to OneDrive', 'error');
+                // Save to local storage as backup
+                localStorage.setItem('ccd_mobile_inventory', JSON.stringify(inventory));
+                localStorage.setItem('ccd_mobile_sales', JSON.stringify(salesHistory));
+                hasUnsavedChanges = true;
+                document.getElementById('unsavedBadge').classList.add('visible');
                 return false;
             }
             
@@ -2240,7 +2257,8 @@ Usage:
                 );
                 
                 if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    const errorText = await response.text();
+                    throw new Error(`HTTP ${response.status}: ${response.statusText} - ${errorText}`);
                 }
                 
                 // Save activity log to separate file
@@ -2258,16 +2276,27 @@ Usage:
                 localStorage.setItem('ccd_mobile_last_sync', lastSyncTime.toISOString());
                 document.getElementById('lastSyncDate').textContent = formatTime(lastSyncTime);
                 
+                // Also save to local storage as backup
+                localStorage.setItem('ccd_mobile_inventory', JSON.stringify(inventory));
+                localStorage.setItem('ccd_mobile_sales', JSON.stringify(salesHistory));
+                
                 updateSyncStatus('connected', `Saved ${formatTime(lastSyncTime)}`);
                 hideLoading();
-                showToast('Saved to OneDrive!', 'success');
+                showToast('✅ Saved to OneDrive!', 'success');
                 return true;
             } catch (error) {
                 logActivity('SAVE_FAILED', { error: error.message });
                 console.error('Save to OneDrive error:', error);
                 hideLoading();
                 updateSyncStatus('error', 'Save failed');
-                showToast('Failed to save: ' + error.message, 'error');
+                showToast('❌ Save failed: ' + error.message, 'error');
+                
+                // Save to local storage as backup
+                localStorage.setItem('ccd_mobile_inventory', JSON.stringify(inventory));
+                localStorage.setItem('ccd_mobile_sales', JSON.stringify(salesHistory));
+                hasUnsavedChanges = true;
+                document.getElementById('unsavedBadge').classList.add('visible');
+                
                 return false;
             }
         }
@@ -2324,7 +2353,7 @@ Usage:
             autoSyncTimer = setInterval(async () => {
                 if (isConnected && !hasUnsavedChanges) {
                     console.log('Auto-sync: checking for updates...');
-                    await loadFromOneDrive();
+                    await checkForRemoteChanges();
                 }
             }, AUTO_SYNC_INTERVAL);
         }
@@ -2333,6 +2362,55 @@ Usage:
             if (autoSyncTimer) {
                 clearInterval(autoSyncTimer);
                 autoSyncTimer = null;
+            }
+        }
+
+        // Track last known modified time from server
+        let lastKnownServerModified = null;
+
+        /**
+         * Check if remote file has changed before doing full reload
+         */
+        async function checkForRemoteChanges() {
+            const token = await getAccessToken();
+            if (!token) return;
+
+            try {
+                // Get file metadata (not content) to check modified time
+                const response = await fetch(
+                    `https://graph.microsoft.com/v1.0/me/drive/root:${ONEDRIVE_FILE_PATH}`,
+                    {
+                        headers: {
+                            'Authorization': `Bearer ${token}`
+                        }
+                    }
+                );
+
+                if (!response.ok) return;
+
+                const metadata = await response.json();
+                const serverModified = new Date(metadata.lastModifiedDateTime).getTime();
+
+                // If this is first check, just store the time
+                if (!lastKnownServerModified) {
+                    lastKnownServerModified = serverModified;
+                    return;
+                }
+
+                // Check if file was modified
+                if (serverModified > lastKnownServerModified) {
+                    console.log('🔄 Remote changes detected! Reloading...');
+                    logActivity('REMOTE_CHANGE_DETECTED', { 
+                        oldTime: new Date(lastKnownServerModified).toISOString(),
+                        newTime: new Date(serverModified).toISOString()
+                    });
+                    
+                    lastKnownServerModified = serverModified;
+                    await loadFromOneDrive();
+                    showToast('📥 Synced updates from desktop!', 'success');
+                }
+            } catch (error) {
+                console.error('Check for changes failed:', error);
             }
         }
 
