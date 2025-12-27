@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
 ================================================================================
-CCD MOBILE INVENTORY MODULE v2.0.1 - OneDrive Sync Edition
+CCD MOBILE INVENTORY MODULE v2.0.2 - OneDrive Sync Edition
 ================================================================================
 A lightweight, mobile-optimized inventory management tool.
 Real-time sync with OneDrive - works in Safari!
@@ -20,6 +20,13 @@ Usage:
 2. Enter PIN to access
 3. Tap "Connect to OneDrive" and sign in with Microsoft
 4. Make changes and tap Save - syncs automatically!
+
+CHANGELOG v2.0.2 (2025-12-27):
+- CRITICAL FIX: Changed field structure from channelAllocations to channels
+- Fixed channel names to match Master JSON (lowercase: etsy, wix, wayfair, treasuremarts)
+- Now correctly reads and displays inventory quantities from all channels
+- Preserves existing channel data (like crazychicks) that isn't displayed in mobile app
+- Compatible with desktop inventory system's JSON structure
 
 ================================================================================
 -->
@@ -1382,9 +1389,9 @@ Usage:
                     const item = inventory.find(i => String(i.id) === String(queuedItem.change.itemId));
                     if (item) {
                         if (queuedItem.change.type === 'sold') {
-                            item.channelAllocations = queuedItem.change.newAllocations;
+                            item.channels = queuedItem.change.newAllocations;
                         } else if (queuedItem.change.type === 'edit') {
-                            item.channelAllocations = queuedItem.change.newAllocations;
+                            item.channels = queuedItem.change.newAllocations;
                         }
                     }
                     processedChanges.push(queuedItem);
@@ -2124,7 +2131,7 @@ Usage:
             
             listDiv.innerHTML = filteredInventory.map(item => {
                 const totalQty = getTotalQty(item);
-                const allocations = item.channelAllocations || {};
+                const channels = item.channels || {};
                 
                 // Calculate retail price from actual data
                 const costPrice = parseFloat(item.costPrice) || 0;
@@ -2153,19 +2160,19 @@ Usage:
                         <div class="item-channels">
                             <div class="channel-row">
                                 <span class="channel-label">Etsy:</span>
-                                <span class="channel-qty">${allocations.Etsy || 0}</span>
+                                <span class="channel-qty">${channels.etsy || 0}</span>
                             </div>
                             <div class="channel-row">
                                 <span class="channel-label">Wix:</span>
-                                <span class="channel-qty">${allocations.Wix || 0}</span>
+                                <span class="channel-qty">${channels.wix || 0}</span>
                             </div>
                             <div class="channel-row">
                                 <span class="channel-label">Wayfair:</span>
-                                <span class="channel-qty">${allocations.Wayfair || 0}</span>
+                                <span class="channel-qty">${channels.wayfair || 0}</span>
                             </div>
                             <div class="channel-row">
                                 <span class="channel-label">TreasureMarts:</span>
-                                <span class="channel-qty">${allocations.TreasureMarts || 0}</span>
+                                <span class="channel-qty">${channels.treasuremarts || 0}</span>
                             </div>
                         </div>
                     </div>
@@ -2182,8 +2189,8 @@ Usage:
         }
         
         function getTotalQty(item) {
-            const alloc = item.channelAllocations || {};
-            return (alloc.Etsy || 0) + (alloc.Wix || 0) + (alloc.Wayfair || 0) + (alloc.TreasureMarts || 0);
+            const channels = item.channels || {};
+            return (channels.etsy || 0) + (channels.wix || 0) + (channels.wayfair || 0) + (channels.treasuremarts || 0);
         }
         
         function openItemModal(itemId) {
@@ -2205,11 +2212,11 @@ Usage:
             document.getElementById('editBrand').value = currentItem.brandName || '';
             document.getElementById('editRetailPrice').value = '$' + retailPrice.toFixed(2);
             
-            const alloc = currentItem.channelAllocations || {};
-            document.getElementById('editEtsy').value = alloc.Etsy || 0;
-            document.getElementById('editWix').value = alloc.Wix || 0;
-            document.getElementById('editWayfair').value = alloc.Wayfair || 0;
-            document.getElementById('editTreasureMarts').value = alloc.TreasureMarts || 0;
+            const channels = currentItem.channels || {};
+            document.getElementById('editEtsy').value = channels.etsy || 0;
+            document.getElementById('editWix').value = channels.wix || 0;
+            document.getElementById('editWayfair').value = channels.wayfair || 0;
+            document.getElementById('editTreasureMarts').value = channels.treasuremarts || 0;
             
             updateTotalQty();
             
@@ -2241,13 +2248,17 @@ Usage:
             if (!currentItem) return;
             
             const newAllocations = {
-                Etsy: parseInt(document.getElementById('editEtsy').value) || 0,
-                Wix: parseInt(document.getElementById('editWix').value) || 0,
-                Wayfair: parseInt(document.getElementById('editWayfair').value) || 0,
-                TreasureMarts: parseInt(document.getElementById('editTreasureMarts').value) || 0
+                etsy: parseInt(document.getElementById('editEtsy').value) || 0,
+                wix: parseInt(document.getElementById('editWix').value) || 0,
+                wayfair: parseInt(document.getElementById('editWayfair').value) || 0,
+                treasuremarts: parseInt(document.getElementById('editTreasureMarts').value) || 0
             };
             
-            currentItem.channelAllocations = newAllocations;
+            // Preserve existing channels that aren't in the mobile app (like crazychicks)
+            currentItem.channels = {
+                ...currentItem.channels,
+                ...newAllocations
+            };
             
             logActivity('ITEM_EDITED', { 
                 itemId: currentItem.id, 
@@ -2280,13 +2291,15 @@ Usage:
                 return;
             }
             
-            const oldAllocations = { ...currentItem.channelAllocations };
+            const oldAllocations = { ...currentItem.channels };
             
-            currentItem.channelAllocations = {
-                Etsy: 0,
-                Wix: 0,
-                Wayfair: 0,
-                TreasureMarts: 0
+            // Preserve existing channels that aren't in the mobile app (like crazychicks)
+            currentItem.channels = {
+                ...currentItem.channels,
+                etsy: 0,
+                wix: 0,
+                wayfair: 0,
+                treasuremarts: 0
             };
             
             logActivity('ITEM_SOLD', { 
@@ -2315,7 +2328,7 @@ Usage:
                 addToOfflineQueue({
                     type: 'sold',
                     itemId: currentItem.id,
-                    newAllocations: currentItem.channelAllocations
+                    newAllocations: currentItem.channels
                 });
             }
             
