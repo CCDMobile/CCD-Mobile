@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
 ================================================================================
-CCD MOBILE INVENTORY MODULE v2.0.2 - OneDrive Sync Edition
+CCD MOBILE INVENTORY MODULE v2.0.3 - OneDrive Sync Edition
 ================================================================================
 A lightweight, mobile-optimized inventory management tool.
 Real-time sync with OneDrive - works in Safari!
@@ -20,6 +20,11 @@ Usage:
 2. Enter PIN to access
 3. Tap "Connect to OneDrive" and sign in with Microsoft
 4. Make changes and tap Save - syncs automatically!
+
+CHANGELOG v2.0.3 (2025-12-27):
+- Fixed product info display in edit modal (uses retailPrice field directly)
+- Fixed retail price display in inventory list
+- Confirmed auto-sync functionality unchanged (30 seconds + immediate on save)
 
 CHANGELOG v2.0.2 (2025-12-27):
 - CRITICAL FIX: Changed field structure from channelAllocations to channels
@@ -2133,10 +2138,8 @@ CHANGELOG v2.0.2 (2025-12-27):
                 const totalQty = getTotalQty(item);
                 const channels = item.channels || {};
                 
-                // Calculate retail price from actual data
-                const costPrice = parseFloat(item.costPrice) || 0;
-                const retailMarkup = parseFloat(item.retailMarkup) || 0;
-                const retailPrice = costPrice * (1 + retailMarkup / 100);
+                // Use retail price directly from the item
+                const retailPrice = parseFloat(item.retailPrice) || 0;
                 
                 return `
                     <div class="inventory-item" onclick="openItemModal('${item.id}')">
@@ -2202,10 +2205,8 @@ CHANGELOG v2.0.2 (2025-12-27):
                 return;
             }
             
-            // Calculate retail price
-            const costPrice = parseFloat(currentItem.costPrice) || 0;
-            const retailMarkup = parseFloat(currentItem.retailMarkup) || 0;
-            const retailPrice = costPrice * (1 + retailMarkup / 100);
+            // Use retail price directly from the item
+            const retailPrice = parseFloat(currentItem.retailPrice) || 0;
             
             document.getElementById('editProductName').value = currentItem.productName || '';
             document.getElementById('editSku').value = currentItem.sku || '';
