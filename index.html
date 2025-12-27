@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
 ================================================================================
-CCD MOBILE INVENTORY MODULE v2.0.5 - OneDrive Sync Edition
+CCD MOBILE INVENTORY MODULE v2.1.0 - OneDrive Sync Edition
 ================================================================================
 A lightweight, mobile-optimized inventory management tool.
 Real-time sync with OneDrive - works in Safari!
@@ -20,6 +20,19 @@ Usage:
 2. Enter PIN to access
 3. Tap "Connect to OneDrive" and sign in with Microsoft
 4. Make changes and tap Save - syncs automatically!
+
+CHANGELOG v2.1.0 (2025-12-27):
+- MAJOR: Implemented correct channel-specific pricing formulas
+- Now matches desktop system exactly for Etsy, Wix, Wayfair, TreasureMarts
+- Prices calculated from wholesale + fees + overhead (not simple markup)
+- Each channel shows its actual retail price (they can be different)
+- Fixed alignment: quantities now line up in clean columns
+
+CHANGELOG v2.0.6 (2025-12-27):
+- Improved channel quantity alignment using CSS grid
+- Quantities now align vertically for easier reading
+- Prices align on the right for cleaner display
+- Note: Retail prices shown are correct (base price + adjustments)
 
 CHANGELOG v2.0.5 (2025-12-27):
 - Updated branding: Replaced chicken emoji with Highland cow 🐮
@@ -400,8 +413,8 @@ CHANGELOG v2.0.2 (2025-12-27):
         }
 
         .channel-row {
-            display: flex;
-            justify-content: space-between;
+            display: grid;
+            grid-template-columns: 100px 40px 1fr;
             align-items: center;
             padding: 4px 0;
             gap: 8px;
@@ -409,20 +422,20 @@ CHANGELOG v2.0.2 (2025-12-27):
 
         .channel-label {
             color: var(--text-light);
-            flex-shrink: 0;
+            text-align: left;
         }
 
         .channel-qty {
             font-weight: 600;
-            min-width: 30px;
-            text-align: center;
+            text-align: right;
+            padding-right: 4px;
         }
 
         .channel-price {
             color: var(--success);
             font-weight: 500;
             font-size: 13px;
-            margin-left: auto;
+            text-align: right;
         }
 
 
@@ -1225,7 +1238,7 @@ CHANGELOG v2.0.2 (2025-12-27):
                     <div class="settings-section-title">Version</div>
                     <div class="settings-item">
                         <div class="settings-item-label">App Version</div>
-                        <div class="settings-item-value">v2.0.5</div>
+                        <div class="settings-item-value">v2.1.0</div>
                     </div>
                 </div>
             </div>
@@ -1304,6 +1317,63 @@ CHANGELOG v2.0.2 (2025-12-27):
         const CLIENT_ID = '26b4b76a-3480-455a-8c0f-91d5305f9c35';
         const REDIRECT_URI = window.location.origin + window.location.pathname;
         const SCOPES = ['Files.ReadWrite', 'offline_access'];
+        
+        const CRAZY_CHICKS_RENT = 200;
+        const TREASURE_MARTS_RENT = 250;
+        const globalSurcharge = 7.0;
+        const etsyOHFee = 10.0;
+        const wixOHFee = 10.0;
+        const wayfairOHFee = 10.0;
+        const treasureMartsRentFee = 10.0;
+        
+        // ============================================================================
+        // CHANNEL PRICE CALCULATION (Matches Desktop System)
+        // ============================================================================
+        
+        function calculateChannelPrice(item, channel) {
+            const wholesale = parseFloat(item.wholesalePrice) || 0;
+            const ibPercent = parseFloat(item.ibShipping) || 0;
+            const ib = wholesale * (ibPercent / 100);
+            const tariff = parseFloat(item.tariff) || 0;
+            const ob = parseFloat(item.obShipping) || 0;
+            
+            let retailPrice = 0;
+            
+            if (channel === 'etsy') {
+                const overheadFee = (wholesale + ib + tariff + ob) * (etsyOHFee / 100);
+                const surcharge = ob * (globalSurcharge / 100);
+                const formulaBaseRetail = wholesale * 2; // 100% markup
+                retailPrice = formulaBaseRetail + ib + tariff + ob + overheadFee + surcharge;
+                
+            } else if (channel === 'wix') {
+                const overheadFee = (wholesale + ib + tariff + ob) * (wixOHFee / 100);
+                const surcharge = ob * (globalSurcharge / 100);
+                const formulaBaseRetail = wholesale * 2;
+                retailPrice = formulaBaseRetail + ib + tariff + ob + overheadFee + surcharge;
+                
+            } else if (channel === 'wayfair') {
+                const formulaBaseRetail = wholesale * 2;
+                const recoveryFee = formulaBaseRetail * 0.04;
+                const overheadFee = (wholesale + ib + tariff) * (wayfairOHFee / 100);
+                retailPrice = formulaBaseRetail + ib + tariff + recoveryFee + overheadFee;
+                
+            } else if (channel === 'treasuremarts') {
+                if (item.coopPrice && item.coopPrice > 0) {
+                    retailPrice = item.coopPrice;
+                } else {
+                    const basePrice = wholesale * 2;
+                    const commission = basePrice * 0.10;
+                    const baseRetail = basePrice + ib + tariff + commission;
+                    retailPrice = baseRetail / (1 - (treasureMartsRentFee / 100));
+                }
+            }
+            
+            // Apply channel-specific price adjustments
+            const adjustment = (item.channelPriceAdjustments && item.channelPriceAdjustments[channel]) || 0;
+            retailPrice += adjustment;
+            
+            return retailPrice;
+        }
         
         // ============================================================================
         // STATE MANAGEMENT
@@ -2167,16 +2237,12 @@ CHANGELOG v2.0.2 (2025-12-27):
             listDiv.innerHTML = filteredInventory.map(item => {
                 const totalQty = getTotalQty(item);
                 const channels = item.channels || {};
-                const priceAdj = item.channelPriceAdjustments || {};
                 
-                // Use retail price directly from the item
-                const retailPrice = parseFloat(item.retailPrice) || 0;
-                
-                // Calculate channel-specific prices
-                const etsyPrice = retailPrice + (parseFloat(priceAdj.etsy) || 0);
-                const wixPrice = retailPrice + (parseFloat(priceAdj.wix) || 0);
-                const wayfairPrice = retailPrice + (parseFloat(priceAdj.wayfair) || 0);
-                const treasuremartsPrice = retailPrice + (parseFloat(priceAdj.treasuremarts) || 0);
+                // Calculate channel-specific prices using the formula
+                const etsyPrice = calculateChannelPrice(item, 'etsy');
+                const wixPrice = calculateChannelPrice(item, 'wix');
+                const wayfairPrice = calculateChannelPrice(item, 'wayfair');
+                const treasuremartsPrice = calculateChannelPrice(item, 'treasuremarts');
                 
                 return `
                     <div class="inventory-item" onclick="openItemModal('${item.id}')">
@@ -2190,7 +2256,7 @@ CHANGELOG v2.0.2 (2025-12-27):
                         <div class="item-details">
                             <div class="detail-item">
                                 <span class="detail-label">Retail Price:</span>
-                                <span class="detail-value">$${retailPrice.toFixed(2)}</span>
+                                <span class="detail-value">$${(parseFloat(item.retailPrice) || 0).toFixed(2)}</span>
                             </div>
                             <div class="detail-item">
                                 <span class="detail-label">Shelf:</span>
