@@ -893,6 +893,95 @@ Usage:
         .file-path-value {
             color: var(--onedrive);
         }
+
+        /* File Browser Modal */
+        .file-browser-modal {
+            background: white;
+            border-radius: 16px;
+            width: 90%;
+            max-width: 500px;
+            max-height: 70vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .file-browser-header {
+            padding: 20px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .file-browser-title {
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 10px;
+        }
+
+        .file-breadcrumb {
+            font-size: 13px;
+            color: var(--text-light);
+        }
+
+        .file-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px;
+        }
+
+        .file-item {
+            display: flex;
+            align-items: center;
+            padding: 12px 15px;
+            border-radius: 10px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .file-item:hover {
+            background: var(--bg);
+        }
+
+        .file-item:active {
+            background: var(--border);
+        }
+
+        .file-icon {
+            font-size: 28px;
+            margin-right: 12px;
+        }
+
+        .file-name {
+            flex: 1;
+            font-weight: 500;
+        }
+
+        .file-size {
+            font-size: 13px;
+            color: var(--text-light);
+        }
+
+        .folder-item {
+            border: 1px solid var(--border);
+        }
+
+        .json-file-item {
+            background: #F0F7FF;
+            border: 1px solid var(--onedrive);
+        }
+
+        .empty-folder {
+            text-align: center;
+            padding: 40px 20px;
+            color: var(--text-light);
+        }
+
+        .file-browser-footer {
+            padding: 15px 20px;
+            border-top: 1px solid var(--border);
+            display: flex;
+            justify-content: flex-end;
+        }
     </style>
 </head>
 <body>
@@ -1145,6 +1234,22 @@ Usage:
             <div class="button-group">
                 <button class="btn btn-secondary" onclick="closeSyncWarning()">Keep Mine</button>
                 <button class="btn btn-primary" onclick="reloadFromFile()">Load Latest</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- File Browser Modal -->
+    <div class="modal" id="fileBrowserModal" onclick="closeFileBrowserOutside(event)">
+        <div class="file-browser-modal">
+            <div class="file-browser-header">
+                <div class="file-browser-title">Select Master JSON File</div>
+                <div class="file-breadcrumb" id="fileBreadcrumb">OneDrive</div>
+            </div>
+            <div class="file-list" id="fileList">
+                <div class="empty-folder">Loading...</div>
+            </div>
+            <div class="file-browser-footer">
+                <button class="btn btn-secondary" onclick="closeFileBrowser()">Cancel</button>
             </div>
         </div>
     </div>
@@ -1505,102 +1610,174 @@ Usage:
             }
         }
         
+        // File browser state
+        let currentFolderId = 'root';
+        let folderStack = [];
+        
         async function selectMasterFile() {
             try {
-                logActivity('FILE_PICKER_OPENED', {});
-                showToast('Opening file picker...', 'success');
+                logActivity('FILE_BROWSER_OPENED', {});
                 
-                // Use OneDrive file picker
-                const pickerOptions = {
-                    clientId: CLIENT_ID,
-                    action: 'query',
-                    multiSelect: false,
-                    advanced: {
-                        queryParameters: 'select=id,name,size,@microsoft.graph.downloadUrl',
-                        filter: '.json'
-                    },
-                    success: async (files) => {
-                        if (files.value && files.value.length > 0) {
-                            const file = files.value[0];
-                            currentFileId = file.id;
-                            currentFilePath = file.name;
-                            
-                            // Save file info to localStorage
-                            localStorage.setItem('ccd_onedrive_file_id', currentFileId);
-                            localStorage.setItem('ccd_onedrive_file_path', currentFilePath);
-                            
-                            isConnected = true;
-                            updateConnectionUI();
-                            
-                            logActivity('FILE_SELECTED', { 
-                                fileId: currentFileId, 
-                                fileName: currentFilePath 
-                            });
-                            
-                            await loadInventoryFromOneDrive();
-                            startAutoSync();
-                            startTokenHealthCheck();
-                            
-                            showToast('Connected to ' + currentFilePath, 'success');
-                            closeSettings();
-                        }
-                    },
-                    cancel: () => {
-                        logActivity('FILE_PICKER_CANCELLED', {});
-                        showToast('File selection cancelled', 'warning');
-                    },
-                    error: (err) => {
-                        logActivity('FILE_PICKER_ERROR', { error: err.message || err });
-                        showToast('File picker error', 'error');
-                    }
-                };
+                // Reset browser state
+                currentFolderId = 'root';
+                folderStack = [];
                 
-                OneDrive.open(pickerOptions);
+                // Show file browser modal
+                await showFileBrowser();
                 
             } catch (err) {
-                logActivity('FILE_PICKER_LAUNCH_ERROR', { error: err.message });
+                logActivity('FILE_BROWSER_ERROR', { error: err.message });
+                showToast('Failed to open file browser', 'error');
+            }
+        }
+        
+        async function showFileBrowser() {
+            try {
+                showToast('Loading files...', 'success');
                 
-                // Fallback: try Graph API to list files
-                try {
-                    const response = await fetch('https://graph.microsoft.com/v1.0/me/drive/root/children?$filter=endswith(name,%27.json%27)', {
-                        headers: {
-                            'Authorization': `Bearer ${accessToken}`
-                        }
-                    });
-                    
-                    if (!response.ok) {
-                        throw new Error('Failed to list files');
+                // Fetch files and folders
+                const response = await fetch(`https://graph.microsoft.com/v1.0/me/drive/items/${currentFolderId}/children`, {
+                    headers: {
+                        'Authorization': `Bearer ${accessToken}`
                     }
-                    
-                    const data = await response.json();
-                    
-                    if (data.value && data.value.length > 0) {
-                        // For simplicity, use the first JSON file found
-                        // In production, you'd want to show a list for the user to choose
-                        const file = data.value[0];
-                        currentFileId = file.id;
-                        currentFilePath = file.name;
-                        
-                        localStorage.setItem('ccd_onedrive_file_id', currentFileId);
-                        localStorage.setItem('ccd_onedrive_file_path', currentFilePath);
-                        
-                        isConnected = true;
-                        updateConnectionUI();
-                        
-                        await loadInventoryFromOneDrive();
-                        startAutoSync();
-                        startTokenHealthCheck();
-                        
-                        showToast('Connected to ' + currentFilePath, 'success');
-                        closeSettings();
-                    } else {
-                        showToast('No JSON files found in OneDrive root', 'error');
-                    }
-                    
-                } catch (graphErr) {
-                    logActivity('GRAPH_API_ERROR', { error: graphErr.message });
-                    showToast('Failed to access OneDrive files', 'error');
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Failed to list files');
                 }
+                
+                const data = await response.json();
+                
+                // Show file browser modal
+                document.getElementById('fileBrowserModal').classList.add('active');
+                
+                // Update breadcrumb
+                const breadcrumb = document.getElementById('fileBreadcrumb');
+                if (folderStack.length === 0) {
+                    breadcrumb.textContent = 'OneDrive';
+                } else {
+                    breadcrumb.textContent = 'OneDrive / ' + folderStack.map(f => f.name).join(' / ');
+                }
+                
+                // Render files and folders
+                const fileList = document.getElementById('fileList');
+                fileList.innerHTML = '';
+                
+                // Add back button if not in root
+                if (folderStack.length > 0) {
+                    const backItem = document.createElement('div');
+                    backItem.className = 'file-item folder-item';
+                    backItem.innerHTML = `
+                        <div class="file-icon">⬆️</div>
+                        <div class="file-name">.. (Go back)</div>
+                    `;
+                    backItem.onclick = () => navigateBack();
+                    fileList.appendChild(backItem);
+                }
+                
+                // Sort: folders first, then files
+                const items = data.value || [];
+                const folders = items.filter(item => item.folder);
+                const files = items.filter(item => !item.folder && item.name.endsWith('.json'));
+                
+                // Add folders
+                folders.forEach(folder => {
+                    const folderItem = document.createElement('div');
+                    folderItem.className = 'file-item folder-item';
+                    folderItem.innerHTML = `
+                        <div class="file-icon">📁</div>
+                        <div class="file-name">${folder.name}</div>
+                    `;
+                    folderItem.onclick = () => navigateToFolder(folder);
+                    fileList.appendChild(folderItem);
+                });
+                
+                // Add JSON files
+                files.forEach(file => {
+                    const fileItem = document.createElement('div');
+                    fileItem.className = 'file-item json-file-item';
+                    fileItem.innerHTML = `
+                        <div class="file-icon">📄</div>
+                        <div class="file-name">${file.name}</div>
+                        <div class="file-size">${formatFileSize(file.size)}</div>
+                    `;
+                    fileItem.onclick = () => selectFile(file);
+                    fileList.appendChild(fileItem);
+                });
+                
+                if (folders.length === 0 && files.length === 0) {
+                    fileList.innerHTML = '<div class="empty-folder">No JSON files or folders found</div>';
+                }
+                
+            } catch (err) {
+                logActivity('FILE_BROWSER_LOAD_ERROR', { error: err.message });
+                showToast('Failed to load files: ' + err.message, 'error');
+            }
+        }
+        
+        async function navigateToFolder(folder) {
+            folderStack.push({ id: folder.id, name: folder.name });
+            currentFolderId = folder.id;
+            await showFileBrowser();
+        }
+        
+        async function navigateBack() {
+            if (folderStack.length > 0) {
+                folderStack.pop();
+                currentFolderId = folderStack.length > 0 ? folderStack[folderStack.length - 1].id : 'root';
+                await showFileBrowser();
+            }
+        }
+        
+        async function selectFile(file) {
+            try {
+                currentFileId = file.id;
+                
+                // Build full path
+                let pathParts = folderStack.map(f => f.name);
+                pathParts.push(file.name);
+                currentFilePath = '/' + pathParts.join('/');
+                
+                // Save file info to localStorage
+                localStorage.setItem('ccd_onedrive_file_id', currentFileId);
+                localStorage.setItem('ccd_onedrive_file_path', currentFilePath);
+                
+                isConnected = true;
+                updateConnectionUI();
+                
+                logActivity('FILE_SELECTED', { 
+                    fileId: currentFileId, 
+                    fileName: currentFilePath 
+                });
+                
+                closeFileBrowser();
+                closeSettings();
+                
+                await loadInventoryFromOneDrive();
+                startAutoSync();
+                startTokenHealthCheck();
+                
+                showToast('Connected to ' + file.name, 'success');
+                
+            } catch (err) {
+                logActivity('FILE_SELECT_ERROR', { error: err.message });
+                showToast('Failed to select file', 'error');
+            }
+        }
+        
+        function formatFileSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+        }
+        
+        function closeFileBrowser() {
+            document.getElementById('fileBrowserModal').classList.remove('active');
+        }
+        
+        function closeFileBrowserOutside(event) {
+            if (event.target === event.currentTarget) {
+                closeFileBrowser();
             }
         }
         
@@ -2349,8 +2526,5 @@ Usage:
             }
         });
     </script>
-    
-    <!-- OneDrive File Picker -->
-    <script type="text/javascript" src="https://js.live.net/v7.2/OneDrive.js"></script>
 </body>
 </html>
