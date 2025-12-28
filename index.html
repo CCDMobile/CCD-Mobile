@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
 ================================================================================
-CCD MOBILE INVENTORY MODULE v2.1.1 - OneDrive Sync Edition
+CCD MOBILE INVENTORY MODULE v2.2.0 - OneDrive Sync Edition
 ================================================================================
 A lightweight, mobile-optimized inventory management tool.
 Real-time sync with OneDrive - works in Safari!
@@ -11,7 +11,7 @@ Features:
 - OneDrive API real-time sync (works in all browsers including Safari!)
 - Search inventory by SKU, product name, or brand
 - View and edit channel allocations (Etsy, Wix, Wayfair, TreasureMarts)
-- Quick "Mark as Sold" functionality
+- Quick "Mark as Sold" with full sale details capture
 - Auto-sync every 30 seconds
 - Change Master File location
 
@@ -21,12 +21,14 @@ Usage:
 3. Tap "Connect to OneDrive" and sign in with Microsoft
 4. Make changes and tap Save - syncs automatically!
 
-CHANGELOG v2.1.1 (2025-12-27):
-- FIX: Form fields now scale properly on mobile (no longer cut off)
-- FIX: Quantity logic now uses warehouse qty from master JSON (not sum of channels)
-- Shows "Warehouse Qty" separately from "Allocated to Channels" in edit modal
-- Channel quantities are allocations FROM the warehouse total
-- Improved responsive CSS for narrow screens (stacks inputs on small devices)
+CHANGELOG v2.2.0 (2025-12-28):
+- RESTORED: Sale details modal with channel, quantity, price, date, and notes
+- FIX: Sales now properly deduct from BOTH channel allocation AND warehouse qty
+- FIX: Warehouse qty now shown correctly from master JSON (not sum of channels)
+- FIX: Form fields scale properly on mobile (no longer cut off)
+- Sale price auto-populates based on selected channel's calculated price
+- Default channel selected based on which has inventory
+- Confirmation message shows sale details (qty, channel, price)
 
 CHANGELOG v2.1.0 (2025-12-27):
 - MAJOR: Implemented correct channel-specific pricing formulas
@@ -1047,6 +1049,51 @@ CHANGELOG v2.0.2 (2025-12-27):
             display: flex;
             justify-content: flex-end;
         }
+
+        /* Sale Modal Styles */
+        .sale-channel-select {
+            width: 100%;
+            padding: 10px 12px;
+            border: 2px solid var(--border);
+            border-radius: 10px;
+            font-size: 16px;
+            outline: none;
+            background: white;
+            min-width: 0;
+        }
+
+        .sale-channel-select:focus {
+            border-color: var(--primary);
+        }
+
+        .sale-info-box {
+            background: var(--bg);
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+        }
+
+        .sale-info-title {
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .sale-info-sku {
+            font-size: 13px;
+            color: var(--text-light);
+        }
+
+        .sale-form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        @media (max-width: 380px) {
+            .sale-form-row {
+                grid-template-columns: 1fr;
+            }
+        }
     </style>
 </head>
 <body>
@@ -1260,7 +1307,7 @@ CHANGELOG v2.0.2 (2025-12-27):
                     <div class="settings-section-title">Version</div>
                     <div class="settings-item">
                         <div class="settings-item-label">App Version</div>
-                        <div class="settings-item-value">v2.1.1</div>
+                        <div class="settings-item-value">v2.2.0</div>
                     </div>
                 </div>
             </div>
@@ -1326,6 +1373,58 @@ CHANGELOG v2.0.2 (2025-12-27):
 
     <!-- Toast Notification -->
     <div class="toast" id="toast"></div>
+
+    <!-- Sale Details Modal -->
+    <div class="modal" id="saleModal" onclick="closeSaleModalOutside(event)">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="modal-title">Record Sale</div>
+                <button class="modal-close" onclick="closeSaleModal()">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="sale-info-box">
+                    <div class="sale-info-title" id="saleItemName">Product Name</div>
+                    <div class="sale-info-sku" id="saleItemSku">SKU: 00000</div>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Channel Sold From</label>
+                    <select class="sale-channel-select" id="saleChannel" onchange="updateSalePrice()">
+                        <option value="etsy">Etsy</option>
+                        <option value="wix">Wix</option>
+                        <option value="wayfair">Wayfair</option>
+                        <option value="treasuremarts">TreasureMarts</option>
+                    </select>
+                </div>
+                
+                <div class="sale-form-row">
+                    <div class="form-group">
+                        <label class="form-label">Quantity Sold</label>
+                        <input type="number" class="form-input" id="saleQty" min="1" value="1">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Sale Price ($)</label>
+                        <input type="number" class="form-input" id="salePrice" min="0" step="0.01" placeholder="0.00">
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Sale Date</label>
+                    <input type="date" class="form-input" id="saleDate">
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Notes (optional)</label>
+                    <input type="text" class="form-input" id="saleNotes" placeholder="Order #, customer name, etc.">
+                </div>
+                
+                <div class="button-group">
+                    <button class="btn btn-secondary" onclick="closeSaleModal()">Cancel</button>
+                    <button class="btn btn-success" onclick="confirmSale()">Confirm Sale</button>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <!-- MSAL Library -->
     <script src="https://alcdn.msauth.net/browser/2.38.1/js/msal-browser.min.js"></script>
@@ -2429,33 +2528,109 @@ CHANGELOG v2.0.2 (2025-12-27):
         async function markAsSold() {
             if (!currentItem) return;
             
-            if (!confirm('Mark this item as sold? This will set all channel quantities to 0.')) {
-                return;
+            // Open the sale details modal instead of immediate confirmation
+            openSaleModal();
+        }
+        
+        function openSaleModal() {
+            // Populate sale modal with current item info
+            document.getElementById('saleItemName').textContent = currentItem.productName || 'Unnamed Product';
+            document.getElementById('saleItemSku').textContent = 'SKU: ' + (currentItem.sku || 'N/A');
+            
+            // Set default values
+            document.getElementById('saleQty').value = 1;
+            document.getElementById('saleDate').value = new Date().toISOString().split('T')[0]; // Today
+            document.getElementById('saleNotes').value = '';
+            
+            // Set default channel based on which has inventory
+            const channels = currentItem.channels || {};
+            if (channels.etsy > 0) document.getElementById('saleChannel').value = 'etsy';
+            else if (channels.wix > 0) document.getElementById('saleChannel').value = 'wix';
+            else if (channels.wayfair > 0) document.getElementById('saleChannel').value = 'wayfair';
+            else if (channels.treasuremarts > 0) document.getElementById('saleChannel').value = 'treasuremarts';
+            
+            // Update price based on selected channel
+            updateSalePrice();
+            
+            // Close item modal and open sale modal
+            document.getElementById('itemModal').classList.remove('active');
+            document.getElementById('saleModal').classList.add('active');
+        }
+        
+        function updateSalePrice() {
+            const channel = document.getElementById('saleChannel').value;
+            const price = calculateChannelPrice(currentItem, channel);
+            document.getElementById('salePrice').value = price.toFixed(2);
+        }
+        
+        function closeSaleModal() {
+            document.getElementById('saleModal').classList.remove('active');
+        }
+        
+        function closeSaleModalOutside(event) {
+            if (event.target === event.currentTarget) {
+                closeSaleModal();
+            }
+        }
+        
+        async function confirmSale() {
+            if (!currentItem) return;
+            
+            const channel = document.getElementById('saleChannel').value;
+            const qtySold = parseInt(document.getElementById('saleQty').value) || 1;
+            const salePrice = parseFloat(document.getElementById('salePrice').value) || 0;
+            const saleDate = document.getElementById('saleDate').value;
+            const saleNotes = document.getElementById('saleNotes').value;
+            
+            const channels = currentItem.channels || {};
+            const currentChannelQty = channels[channel] || 0;
+            
+            // Check if we have enough inventory
+            if (qtySold > currentChannelQty) {
+                if (!confirm(`Only ${currentChannelQty} available in ${channel}. Proceed anyway?`)) {
+                    return;
+                }
             }
             
             const oldAllocations = { ...currentItem.channels };
+            const oldWarehouseQty = parseInt(currentItem.qty) || 0;
             
-            // Preserve existing channels that aren't in the mobile app (like crazychicks)
+            // Deduct from channel allocation
+            const newChannelQty = Math.max(0, currentChannelQty - qtySold);
             currentItem.channels = {
                 ...currentItem.channels,
-                etsy: 0,
-                wix: 0,
-                wayfair: 0,
-                treasuremarts: 0
+                [channel]: newChannelQty
+            };
+            
+            // Also deduct from warehouse qty
+            currentItem.qty = Math.max(0, oldWarehouseQty - qtySold);
+            
+            const saleRecord = {
+                timestamp: new Date().toISOString(),
+                saleDate: saleDate,
+                item: { 
+                    id: currentItem.id,
+                    sku: currentItem.sku,
+                    productName: currentItem.productName
+                },
+                channel: channel,
+                qtySold: qtySold,
+                salePrice: salePrice,
+                notes: saleNotes,
+                previousAllocations: oldAllocations,
+                previousWarehouseQty: oldWarehouseQty
             };
             
             logActivity('ITEM_SOLD', { 
                 itemId: currentItem.id, 
                 sku: currentItem.sku,
                 productName: currentItem.productName,
-                previousAllocations: oldAllocations
+                channel: channel,
+                qtySold: qtySold,
+                salePrice: salePrice,
+                previousAllocations: oldAllocations,
+                previousWarehouseQty: oldWarehouseQty
             });
-            
-            const saleRecord = {
-                timestamp: new Date().toISOString(),
-                item: { ...currentItem },
-                previousAllocations: oldAllocations
-            };
             
             salesHistory.push(saleRecord);
             localStorage.setItem('ccd_mobile_sales', JSON.stringify(salesHistory));
@@ -2465,17 +2640,26 @@ CHANGELOG v2.0.2 (2025-12-27):
             saveToStorage();
             
             if (isConnected) {
-                await saveInventoryToOneDrive();
+                const saved = await saveInventoryToOneDrive();
+                if (saved) {
+                    closeSaleModal();
+                    showToast(`Sold ${qtySold} from ${channel} for $${salePrice.toFixed(2)}!`, 'success');
+                } else {
+                    showToast('Sale recorded locally - sync failed', 'warning');
+                    closeSaleModal();
+                }
             } else {
                 addToOfflineQueue({
                     type: 'sold',
                     itemId: currentItem.id,
-                    newAllocations: currentItem.channels
+                    channel: channel,
+                    qtySold: qtySold,
+                    newChannels: currentItem.channels,
+                    newQty: currentItem.qty
                 });
+                closeSaleModal();
+                showToast('Sale saved offline - will sync when connected', 'warning');
             }
-            
-            closeItemModal();
-            showToast('Item marked as sold!', 'success');
         }
         
         function formatTime(date) {
