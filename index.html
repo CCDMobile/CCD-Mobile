@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
 ================================================================================
-CCD MOBILE INVENTORY MODULE v2.3.3 - OneDrive Sync Edition
+CCD MOBILE INVENTORY MODULE v2.3.6 - OneDrive Sync Edition
 ================================================================================
 A lightweight, mobile-optimized inventory management tool.
 Real-time sync with OneDrive - works in Safari!
@@ -21,6 +21,13 @@ Usage:
 2. Enter PIN to access
 3. Tap "Connect to OneDrive" and sign in with Microsoft
 4. Make changes and tap Save - syncs automatically!
+
+CHANGELOG v2.3.4 (2025-12-28):
+- FIX: PDF report now has "Back to App" button at top
+- FIX: PIN session now persists for 24 hours (no re-entry needed)
+- FIX: OneDrive token cached in localStorage (survives app restarts)
+- Session auto-restores: PIN + OneDrive connection both remembered
+- Better popup handling for PDF export
 
 CHANGELOG v2.3.2 (2025-12-28):
 - FIX: Safari redirect auth - now detects auth code and tries silent token
@@ -1351,7 +1358,7 @@ CHANGELOG v2.0.2 (2025-12-27):
                     <div class="settings-section-title">Version</div>
                     <div class="settings-item">
                         <div class="settings-item-label">App Version</div>
-                        <div class="settings-item-value">v2.3.3</div>
+                        <div class="settings-item-value">v2.3.6</div>
                     </div>
                 </div>
             </div>
@@ -2630,7 +2637,10 @@ CHANGELOG v2.0.2 (2025-12-27):
         
         function checkPin() {
             if (pinInput === CORRECT_PIN) {
-                sessionStorage.setItem('ccd_mobile_auth', 'true');
+                // Store auth with 24-hour expiry
+                localStorage.setItem('ccd_mobile_auth', 'true');
+                localStorage.setItem('ccd_mobile_auth_expiry', (Date.now() + 24 * 60 * 60 * 1000).toString());
+                
                 document.getElementById('pinScreen').classList.add('hidden');
                 document.getElementById('appContainer').classList.add('active');
                 
@@ -2980,6 +2990,16 @@ CHANGELOG v2.0.2 (2025-12-27):
             // Also deduct from warehouse qty
             currentItem.qty = Math.max(0, oldWarehouseQty - qtySold);
             
+            logActivity('SALE_QTY_UPDATE', {
+                itemId: currentItem.id,
+                sku: currentItem.sku,
+                channel: channel,
+                oldChannelQty: currentChannelQty,
+                newChannelQty: newChannelQty,
+                oldWarehouseQty: oldWarehouseQty,
+                newWarehouseQty: currentItem.qty
+            });
+            
             const saleRecord = {
                 timestamp: new Date().toISOString(),
                 saleDate: saleDate,
@@ -3015,6 +3035,7 @@ CHANGELOG v2.0.2 (2025-12-27):
             saveToStorage();
             
             if (isConnected) {
+                logActivity('ATTEMPTING_SAVE_TO_ONEDRIVE', { isConnected: true, hasToken: !!accessToken, hasFileId: !!currentFileId });
                 const saved = await saveInventoryToOneDrive();
                 if (saved) {
                     closeSaleModal();
@@ -3024,6 +3045,7 @@ CHANGELOG v2.0.2 (2025-12-27):
                     closeSaleModal();
                 }
             } else {
+                logActivity('NOT_CONNECTED_QUEUEING_OFFLINE', { isConnected: false });
                 addToOfflineQueue({
                     type: 'sold',
                     itemId: currentItem.id,
@@ -3526,74 +3548,76 @@ CHANGELOG v2.0.2 (2025-12-27):
                 const statusSymbol = status === 'found' ? '✓' : (status === 'missing' ? '✗' : '○');
                 const rowStyle = status === 'missing' ? 'background: #FEE2E2; color: #DC2626;' : '';
                 
-                return `
-                    <tr style="${rowStyle}">
-                        <td style="padding: 8px; border: 1px solid #ddd; text-align: center; font-size: 18px;">${statusSymbol}</td>
-                        <td style="padding: 8px; border: 1px solid #ddd;">${item.shelfNumber || 'N/A'}</td>
-                        <td style="padding: 8px; border: 1px solid #ddd;">${item.productName || 'Unnamed'}</td>
-                        <td style="padding: 8px; border: 1px solid #ddd;">${item.sku || 'N/A'}</td>
-                        <td style="padding: 8px; border: 1px solid #ddd; text-align: center;">${qty}</td>
-                        <td style="padding: 8px; border: 1px solid #ddd; text-align: right;">$${price.toFixed(2)}</td>
-                        <td style="padding: 8px; border: 1px solid #ddd; text-align: right;">$${lineTotal.toFixed(2)}</td>
-                    </tr>
-                `;
+                return '<tr style="' + rowStyle + '">' +
+                    '<td style="padding: 6px; border: 1px solid #ddd; text-align: center; font-size: 16px;">' + statusSymbol + '</td>' +
+                    '<td style="padding: 6px; border: 1px solid #ddd;">' + (item.shelfNumber || 'N/A') + '</td>' +
+                    '<td style="padding: 6px; border: 1px solid #ddd;">' + (item.productName || 'Unnamed') + '</td>' +
+                    '<td style="padding: 6px; border: 1px solid #ddd;">' + (item.sku || 'N/A') + '</td>' +
+                    '<td style="padding: 6px; border: 1px solid #ddd; text-align: center;">' + qty + '</td>' +
+                    '<td style="padding: 6px; border: 1px solid #ddd; text-align: right;">$' + price.toFixed(2) + '</td>' +
+                    '<td style="padding: 6px; border: 1px solid #ddd; text-align: right;">$' + lineTotal.toFixed(2) + '</td>' +
+                    '</tr>';
             }).join('');
             
-            const html = `
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <title>TreasureMart Inventory Report</title>
-                    <style>
-                        body { font-family: Arial, sans-serif; padding: 20px; }
-                        h1 { color: #059669; margin-bottom: 5px; }
-                        .date { color: #666; margin-bottom: 20px; }
-                        table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
-                        th { background: #059669; color: white; padding: 10px; text-align: left; }
-                        .totals { font-size: 18px; font-weight: bold; }
-                        .legend { margin-top: 20px; font-size: 14px; color: #666; }
-                        @media print {
-                            button { display: none; }
-                        }
-                    </style>
-                </head>
-                <body>
-                    <h1>🐮 TreasureMart Inventory Report</h1>
-                    <div class="date">Generated: ${new Date().toLocaleString()}</div>
-                    <button onclick="window.print()" style="padding: 10px 20px; background: #059669; color: white; border: none; border-radius: 5px; cursor: pointer; margin-bottom: 20px;">🖨️ Print / Save as PDF</button>
-                    
-                    <table>
-                        <thead>
-                            <tr>
-                                <th style="width: 40px;">✓</th>
-                                <th>Shelf</th>
-                                <th>Product Name</th>
-                                <th>SKU</th>
-                                <th style="width: 50px;">Qty</th>
-                                <th style="width: 80px;">Price</th>
-                                <th style="width: 80px;">Total</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${rows}
-                        </tbody>
-                    </table>
-                    
-                    <div class="totals">
-                        Total Items: ${totalItems}<br>
-                        Total Value: $${totalValue.toFixed(2)}
-                    </div>
-                    
-                    <div class="legend">
-                        <strong>Legend:</strong> ○ = Unchecked, ✓ = Found, ✗ = Missing (highlighted in red)
-                    </div>
-                </body>
-                </html>
-            `;
+            const html = '<!DOCTYPE html>' +
+                '<html>' +
+                '<head>' +
+                '<title>TreasureMart Inventory Report</title>' +
+                '<meta name="viewport" content="width=device-width, initial-scale=1.0">' +
+                '<style>' +
+                'body { font-family: Arial, sans-serif; padding: 20px; font-size: 11px; }' +
+                'h1 { color: #059669; margin-bottom: 5px; font-size: 20px; }' +
+                '.date { color: #666; margin-bottom: 20px; font-size: 12px; }' +
+                '.btn-group { margin-bottom: 20px; display: flex; gap: 10px; flex-wrap: wrap; }' +
+                '.btn { padding: 12px 20px; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; }' +
+                '.btn-print { background: #059669; color: white; }' +
+                '.btn-back { background: #6B7280; color: white; }' +
+                'table { width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 11px; }' +
+                'th { background: #059669; color: white; padding: 8px; text-align: left; font-size: 11px; }' +
+                'td { font-size: 11px; }' +
+                '.totals { font-size: 14px; font-weight: bold; }' +
+                '.legend { margin-top: 20px; font-size: 11px; color: #666; }' +
+                '@media print { .btn-group { display: none; } body { padding: 10px; } }' +
+                '</style>' +
+                '</head>' +
+                '<body>' +
+                '<div class="btn-group">' +
+                '<button class="btn btn-back" onclick="window.close()">← Back to App</button>' +
+                '<button class="btn btn-print" onclick="window.print()">🖨️ Print / Save as PDF</button>' +
+                '</div>' +
+                '<h1>🐮 TreasureMart Inventory Report</h1>' +
+                '<div class="date">Generated: ' + new Date().toLocaleString() + '</div>' +
+                '<table>' +
+                '<thead>' +
+                '<tr>' +
+                '<th style="width: 40px;">✓</th>' +
+                '<th>Shelf</th>' +
+                '<th>Product Name</th>' +
+                '<th>SKU</th>' +
+                '<th style="width: 40px;">Qty</th>' +
+                '<th style="width: 70px;">Price</th>' +
+                '<th style="width: 70px;">Total</th>' +
+                '</tr>' +
+                '</thead>' +
+                '<tbody>' + rows + '</tbody>' +
+                '</table>' +
+                '<div class="totals">' +
+                'Total Items: ' + totalItems + '<br>' +
+                'Total Value: $' + totalValue.toFixed(2) +
+                '</div>' +
+                '<div class="legend">' +
+                '<strong>Legend:</strong> ○ = Unchecked, ✓ = Found, ✗ = Missing (highlighted in red)' +
+                '</div>' +
+                '</body>' +
+                '</html>';
             
             const printWindow = window.open('', '_blank');
-            printWindow.document.write(html);
-            printWindow.document.close();
+            if (printWindow) {
+                printWindow.document.write(html);
+                printWindow.document.close();
+            } else {
+                showToast('Popup blocked - please allow popups', 'error');
+            }
             
             logActivity('TM_REPORT_PDF_EXPORTED', { itemCount: tmItems.length });
         }
@@ -3717,9 +3741,14 @@ CHANGELOG v2.0.2 (2025-12-27):
             
             logActivity('APP_OPENED', { url: window.location.href });
             
-            // Check if already authenticated this session
-            const authenticated = sessionStorage.getItem('ccd_mobile_auth');
-            if (authenticated === 'true') {
+            // Check if already authenticated (use localStorage to persist across sessions)
+            const authenticated = localStorage.getItem('ccd_mobile_auth');
+            const authExpiry = localStorage.getItem('ccd_mobile_auth_expiry');
+            
+            // Auth expires after 24 hours for security
+            const isAuthValid = authenticated === 'true' && authExpiry && parseInt(authExpiry) > Date.now();
+            
+            if (isAuthValid) {
                 document.getElementById('pinScreen').classList.add('hidden');
                 document.getElementById('appContainer').classList.add('active');
                 
@@ -3741,6 +3770,10 @@ CHANGELOG v2.0.2 (2025-12-27):
                         }
                     }
                 });
+            } else {
+                // Clear old auth
+                localStorage.removeItem('ccd_mobile_auth');
+                localStorage.removeItem('ccd_mobile_auth_expiry');
             }
             
             // Load last sync time
