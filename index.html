@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
 ================================================================================
-CCD MOBILE INVENTORY MODULE v2.3.6 - OneDrive Sync Edition
+CCD MOBILE INVENTORY MODULE v2.3.7 - OneDrive Sync Edition
 ================================================================================
 A lightweight, mobile-optimized inventory management tool.
 Real-time sync with OneDrive - works in Safari!
@@ -1358,7 +1358,7 @@ CHANGELOG v2.0.2 (2025-12-27):
                     <div class="settings-section-title">Version</div>
                     <div class="settings-item">
                         <div class="settings-item-label">App Version</div>
-                        <div class="settings-item-value">v2.3.6</div>
+                        <div class="settings-item-value">v2.3.7</div>
                     </div>
                 </div>
             </div>
@@ -1648,6 +1648,8 @@ CHANGELOG v2.0.2 (2025-12-27):
         let currentFilePath = null;
         let tokenExpirationTime = null;
         let tokenHealthCheckInterval = null;
+        let lastSaveTime = null;  // Track when we last saved to prevent reload race condition
+        const SAVE_COOLDOWN_MS = 15000;  // Don't auto-reload for 15 seconds after saving
 
         // ============================================================================
         // ACTIVITY LOGGING
@@ -2559,6 +2561,7 @@ CHANGELOG v2.0.2 (2025-12-27):
                 updateSyncStatus('Synced', false);
                 
                 lastSyncTime = new Date();
+                lastSaveTime = Date.now();  // Mark save time to prevent auto-refresh race condition
                 localStorage.setItem('ccd_mobile_last_sync', lastSyncTime.toISOString());
                 
                 return true;
@@ -2580,6 +2583,14 @@ CHANGELOG v2.0.2 (2025-12-27):
             // Auto-sync every 30 seconds
             setInterval(async () => {
                 if (autoSaveEnabled && isConnected) {
+                    // Don't auto-reload if we just saved (prevents race condition)
+                    if (lastSaveTime && (Date.now() - lastSaveTime) < SAVE_COOLDOWN_MS) {
+                        logActivity('AUTO_REFRESH_SKIPPED', { 
+                            reason: 'Recent save cooldown',
+                            secondsSinceSave: Math.floor((Date.now() - lastSaveTime) / 1000)
+                        });
+                        return;
+                    }
                     await loadInventoryFromOneDrive();
                 }
             }, 30000);
