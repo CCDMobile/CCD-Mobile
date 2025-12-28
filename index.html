@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
 ================================================================================
-CCD MOBILE INVENTORY MODULE v2.3.2 - OneDrive Sync Edition
+CCD MOBILE INVENTORY MODULE v2.3.3 - OneDrive Sync Edition
 ================================================================================
 A lightweight, mobile-optimized inventory management tool.
 Real-time sync with OneDrive - works in Safari!
@@ -1351,7 +1351,7 @@ CHANGELOG v2.0.2 (2025-12-27):
                     <div class="settings-section-title">Version</div>
                     <div class="settings-item">
                         <div class="settings-item-label">App Version</div>
-                        <div class="settings-item-value">v2.3.2</div>
+                        <div class="settings-item-value">v2.3.3</div>
                     </div>
                 </div>
             </div>
@@ -1896,16 +1896,16 @@ CHANGELOG v2.0.2 (2025-12-27):
             logActivity('MSAL_INITIALIZED', { redirectUri: REDIRECT_URI });
             
             // Check if we're returning from a redirect (auth code in URL)
-            const hasAuthCode = window.location.href.includes('code=') || window.location.hash.includes('code=');
+            const urlHasCode = window.location.href.includes('code=') || window.location.hash.includes('code=');
             
             // Handle redirect response FIRST before anything else
+            let redirectHandled = false;
             try {
                 const response = await msalInstance.handleRedirectPromise();
                 if (response) {
                     accessToken = response.accessToken;
                     tokenExpirationTime = response.expiresOn.getTime();
                     
-                    // Save token info to survive page reloads and Authenticator switches
                     localStorage.setItem('ccd_access_token', accessToken);
                     localStorage.setItem('ccd_token_expiration', tokenExpirationTime.toString());
                     
@@ -1914,79 +1914,77 @@ CHANGELOG v2.0.2 (2025-12-27):
                         expiresIn: Math.floor((tokenExpirationTime - Date.now()) / 60000) + ' minutes'
                     });
                     
-                    // Clear the URL hash to clean up
-                    if (window.location.hash) {
-                        history.replaceState(null, '', window.location.pathname + window.location.search);
-                    }
+                    // Clear the URL
+                    history.replaceState(null, '', window.location.pathname);
                     
-                    // After successful login, let user select the file
+                    redirectHandled = true;
                     await selectMasterFile();
-                    return; // Don't try silent login if we just handled redirect
-                } else if (hasAuthCode) {
-                    // We have an auth code but handleRedirectPromise returned null
-                    // This happens in Safari - try to get token silently from the account that was just added
-                    logActivity('REDIRECT_CODE_PRESENT_BUT_NULL_RESPONSE', { hasAuthCode: true });
-                    
-                    // Clear the URL hash
-                    if (window.location.hash) {
-                        history.replaceState(null, '', window.location.pathname + window.location.search);
-                    }
-                    
-                    // Check if we now have an account
-                    const accounts = msalInstance.getAllAccounts();
-                    if (accounts.length > 0) {
-                        try {
-                            const silentRequest = {
-                                scopes: SCOPES,
-                                account: accounts[0]
-                            };
-                            const silentResponse = await msalInstance.acquireTokenSilent(silentRequest);
-                            accessToken = silentResponse.accessToken;
-                            tokenExpirationTime = silentResponse.expiresOn.getTime();
-                            
-                            localStorage.setItem('ccd_access_token', accessToken);
-                            localStorage.setItem('ccd_token_expiration', tokenExpirationTime.toString());
-                            
-                            logActivity('SILENT_TOKEN_AFTER_REDIRECT', { 
-                                account: accounts[0].username,
-                                expiresIn: Math.floor((tokenExpirationTime - Date.now()) / 60000) + ' minutes'
-                            });
-                            
-                            await selectMasterFile();
-                            return;
-                        } catch (silentErr) {
-                            logActivity('SILENT_AFTER_REDIRECT_FAILED', { error: silentErr.message });
-                        }
-                    }
+                    return;
                 }
             } catch (err) {
                 logActivity('REDIRECT_LOGIN_ERROR', { error: err.message });
-                console.error('Redirect error:', err);
+            }
+            
+            // If we have an auth code but handleRedirectPromise didn't work
+            if (urlHasCode && !redirectHandled) {
+                logActivity('AUTH_CODE_FALLBACK', { message: 'Trying silent token acquisition' });
                 
-                // Clear the URL hash even on error
-                if (window.location.hash) {
-                    history.replaceState(null, '', window.location.pathname + window.location.search);
+                // Clear the URL first
+                history.replaceState(null, '', window.location.pathname);
+                
+                // Try to get accounts - they might have been added
+                const accounts = msalInstance.getAllAccounts();
+                logActivity('ACCOUNTS_AFTER_REDIRECT', { count: accounts.length });
+                
+                if (accounts.length > 0) {
+                    try {
+                        const silentRequest = {
+                            scopes: SCOPES,
+                            account: accounts[0],
+                            forceRefresh: true
+                        };
+                        const silentResponse = await msalInstance.acquireTokenSilent(silentRequest);
+                        
+                        accessToken = silentResponse.accessToken;
+                        tokenExpirationTime = silentResponse.expiresOn.getTime();
+                        
+                        localStorage.setItem('ccd_access_token', accessToken);
+                        localStorage.setItem('ccd_token_expiration', tokenExpirationTime.toString());
+                        
+                        logActivity('FALLBACK_TOKEN_SUCCESS', { 
+                            account: accounts[0].username,
+                            expiresIn: Math.floor((tokenExpirationTime - Date.now()) / 60000) + ' minutes'
+                        });
+                        
+                        await selectMasterFile();
+                        return;
+                        
+                    } catch (silentErr) {
+                        logActivity('FALLBACK_TOKEN_FAILED', { error: silentErr.message });
+                        showToast('Auth incomplete - please tap Connect again', 'warning');
+                    }
+                } else {
+                    logActivity('NO_ACCOUNTS_AFTER_REDIRECT', {});
+                    showToast('Auth incomplete - please tap Connect again', 'warning');
                 }
             }
             
-            // Check for saved token first (survives Authenticator app switch)
+            // Check for saved token
             const savedToken = localStorage.getItem('ccd_access_token');
             const savedExpiration = localStorage.getItem('ccd_token_expiration');
             
             if (savedToken && savedExpiration && parseInt(savedExpiration) > Date.now()) {
+                logActivity('CHECKING_SAVED_TOKEN', {});
                 accessToken = savedToken;
                 tokenExpirationTime = parseInt(savedExpiration);
                 
-                // Verify token still works
+                // Verify token works
                 try {
                     const testResponse = await fetch('https://graph.microsoft.com/v1.0/me', {
                         headers: { 'Authorization': `Bearer ${accessToken}` }
                     });
                     
                     if (testResponse.ok) {
-                        logActivity('TOKEN_VALIDATED', { expiresIn: Math.floor((tokenExpirationTime - Date.now()) / 60000) + ' minutes' });
-                        
-                        // Token is valid, check if we have a saved file connection
                         const savedFileId = localStorage.getItem('ccd_onedrive_file_id');
                         const savedFilePath = localStorage.getItem('ccd_onedrive_file_path');
                         
@@ -1994,39 +1992,38 @@ CHANGELOG v2.0.2 (2025-12-27):
                             currentFileId = savedFileId;
                             currentFilePath = savedFilePath;
                             isConnected = true;
+                            
+                            logActivity('FULL_SESSION_RESTORED', { filePath: savedFilePath });
+                            
                             updateConnectionUI();
-                            
-                            logActivity('TOKEN_RESTORED', { 
-                                filePath: savedFilePath,
-                                expiresIn: Math.floor((tokenExpirationTime - Date.now()) / 60000) + ' minutes'
-                            });
-                            
                             await loadInventoryFromOneDrive();
                             startAutoSync();
                             startTokenHealthCheck();
                             return;
                         } else {
-                            // Token valid but no file selected - open file browser
-                            logActivity('TOKEN_VALID_NO_FILE', { message: 'Opening file browser' });
+                            logActivity('TOKEN_VALID_NO_FILE', {});
+                            updateConnectionUI();
                             await selectMasterFile();
                             return;
                         }
                     } else {
-                        // Token rejected by API
-                        logActivity('TOKEN_REJECTED', { status: testResponse.status });
+                        logActivity('SAVED_TOKEN_REJECTED', { status: testResponse.status });
                         localStorage.removeItem('ccd_access_token');
                         localStorage.removeItem('ccd_token_expiration');
+                        accessToken = null;
                     }
                 } catch (err) {
-                    // Token invalid, clear it
+                    logActivity('SAVED_TOKEN_ERROR', { error: err.message });
                     localStorage.removeItem('ccd_access_token');
                     localStorage.removeItem('ccd_token_expiration');
-                    logActivity('SAVED_TOKEN_INVALID', { error: err.message });
+                    accessToken = null;
                 }
             }
             
-            // Try to restore previous session via MSAL
+            // Try silent login from MSAL accounts
             const accounts = msalInstance.getAllAccounts();
+            logActivity('CHECKING_MSAL_ACCOUNTS', { count: accounts.length });
+            
             if (accounts.length > 0 && !accessToken) {
                 try {
                     const silentRequest = {
@@ -2037,11 +2034,14 @@ CHANGELOG v2.0.2 (2025-12-27):
                     accessToken = response.accessToken;
                     tokenExpirationTime = response.expiresOn.getTime();
                     
-                    // Save token
                     localStorage.setItem('ccd_access_token', accessToken);
                     localStorage.setItem('ccd_token_expiration', tokenExpirationTime.toString());
                     
-                    // Try to restore previous file connection
+                    logActivity('SILENT_LOGIN_SUCCESS', { 
+                        account: accounts[0].username,
+                        expiresIn: Math.floor((tokenExpirationTime - Date.now()) / 60000) + ' minutes'
+                    });
+                    
                     const savedFileId = localStorage.getItem('ccd_onedrive_file_id');
                     const savedFilePath = localStorage.getItem('ccd_onedrive_file_path');
                     
@@ -2050,19 +2050,17 @@ CHANGELOG v2.0.2 (2025-12-27):
                         currentFilePath = savedFilePath;
                         isConnected = true;
                         updateConnectionUI();
-                        
-                        logActivity('SESSION_RESTORED', { 
-                            filePath: savedFilePath,
-                            expiresIn: Math.floor((tokenExpirationTime - Date.now()) / 60000) + ' minutes'
-                        });
-                        
                         await loadInventoryFromOneDrive();
                         startAutoSync();
                         startTokenHealthCheck();
+                    } else {
+                        updateConnectionUI();
+                        await selectMasterFile();
                     }
+                    return;
+                    
                 } catch (err) {
                     logActivity('SILENT_LOGIN_FAILED', { error: err.message });
-                    console.error('Silent token acquisition failed:', err);
                 }
             }
             
@@ -2073,42 +2071,42 @@ CHANGELOG v2.0.2 (2025-12-27):
             try {
                 logActivity('CONNECT_ONEDRIVE_CLICKED', {});
                 
-                // Mark that we're in the middle of auth (survives page reload)
-                localStorage.setItem('ccd_auth_in_progress', 'true');
-                
                 const loginRequest = {
                     scopes: SCOPES,
                     prompt: 'select_account'
                 };
                 
-                // Try popup first (better for mobile when it works)
-                try {
-                    const response = await msalInstance.loginPopup(loginRequest);
-                    
-                    // Popup succeeded
-                    localStorage.removeItem('ccd_auth_in_progress');
-                    accessToken = response.accessToken;
-                    tokenExpirationTime = response.expiresOn.getTime();
-                    
-                    localStorage.setItem('ccd_access_token', accessToken);
-                    localStorage.setItem('ccd_token_expiration', tokenExpirationTime.toString());
-                    
-                    logActivity('POPUP_LOGIN_SUCCESS', { 
-                        account: response.account.username,
-                        expiresIn: Math.floor((tokenExpirationTime - Date.now()) / 60000) + ' minutes'
-                    });
-                    
-                    await selectMasterFile();
-                    
-                } catch (popupError) {
-                    // Popup blocked or failed, fall back to redirect
-                    logActivity('POPUP_FAILED_USING_REDIRECT', { error: popupError.message });
+                // On mobile, go straight to redirect (popup often fails)
+                const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+                
+                if (isMobile) {
+                    logActivity('USING_REDIRECT_LOGIN', { reason: 'mobile device' });
                     await msalInstance.loginRedirect(loginRequest);
+                } else {
+                    // Try popup on desktop
+                    try {
+                        const response = await msalInstance.loginPopup(loginRequest);
+                        
+                        accessToken = response.accessToken;
+                        tokenExpirationTime = response.expiresOn.getTime();
+                        
+                        localStorage.setItem('ccd_access_token', accessToken);
+                        localStorage.setItem('ccd_token_expiration', tokenExpirationTime.toString());
+                        
+                        logActivity('POPUP_LOGIN_SUCCESS', { 
+                            account: response.account.username
+                        });
+                        
+                        await selectMasterFile();
+                        
+                    } catch (popupError) {
+                        logActivity('POPUP_FAILED_USING_REDIRECT', { error: popupError.message });
+                        await msalInstance.loginRedirect(loginRequest);
+                    }
                 }
                 
             } catch (err) {
-                localStorage.removeItem('ccd_auth_in_progress');
-                logActivity('ONEDRIVE_CONNECT_ERROR', { error: err.message });
+                logActivity('CONNECT_ERROR', { error: err.message });
                 showToast('Connection failed: ' + err.message, 'error');
             }
         }
