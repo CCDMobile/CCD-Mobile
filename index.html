@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
 ================================================================================
-CCD MOBILE INVENTORY MODULE v2.3.7 - OneDrive Sync Edition
+CCD MOBILE INVENTORY MODULE v2.3.8 - OneDrive Sync Edition
 ================================================================================
 A lightweight, mobile-optimized inventory management tool.
 Real-time sync with OneDrive - works in Safari!
@@ -1358,7 +1358,7 @@ CHANGELOG v2.0.2 (2025-12-27):
                     <div class="settings-section-title">Version</div>
                     <div class="settings-item">
                         <div class="settings-item-label">App Version</div>
-                        <div class="settings-item-value">v2.3.7</div>
+                        <div class="settings-item-value">v2.3.8</div>
                     </div>
                 </div>
             </div>
@@ -1981,51 +1981,70 @@ CHANGELOG v2.0.2 (2025-12-27):
             // Check for saved token
             const savedToken = localStorage.getItem('ccd_access_token');
             const savedExpiration = localStorage.getItem('ccd_token_expiration');
+            const savedFileId = localStorage.getItem('ccd_onedrive_file_id');
+            const savedFilePath = localStorage.getItem('ccd_onedrive_file_path');
             
             if (savedToken && savedExpiration && parseInt(savedExpiration) > Date.now()) {
-                logActivity('CHECKING_SAVED_TOKEN', {});
+                logActivity('CHECKING_SAVED_TOKEN', { 
+                    hasFileId: !!savedFileId, 
+                    hasFilePath: !!savedFilePath,
+                    expiresIn: Math.floor((parseInt(savedExpiration) - Date.now()) / 60000) + ' minutes'
+                });
+                
                 accessToken = savedToken;
                 tokenExpirationTime = parseInt(savedExpiration);
                 
-                // Verify token works
-                try {
-                    const testResponse = await fetch('https://graph.microsoft.com/v1.0/me', {
-                        headers: { 'Authorization': `Bearer ${accessToken}` }
-                    });
+                // If we have file info, restore connection immediately (trust the saved state)
+                // This helps when coming back from sleep where network might be slow
+                if (savedFileId && savedFilePath) {
+                    currentFileId = savedFileId;
+                    currentFilePath = savedFilePath;
+                    isConnected = true;
                     
-                    if (testResponse.ok) {
-                        const savedFileId = localStorage.getItem('ccd_onedrive_file_id');
-                        const savedFilePath = localStorage.getItem('ccd_onedrive_file_path');
+                    logActivity('FULL_SESSION_RESTORED', { filePath: savedFilePath });
+                    
+                    updateConnectionUI();
+                    
+                    // Load inventory (this will verify token works)
+                    try {
+                        await loadInventoryFromOneDrive();
+                        startAutoSync();
+                        startTokenHealthCheck();
+                        return;
+                    } catch (err) {
+                        logActivity('RESTORE_LOAD_FAILED', { error: err.message });
+                        // Token might be bad, clear and let user reconnect
+                        isConnected = false;
+                        accessToken = null;
+                        localStorage.removeItem('ccd_access_token');
+                        localStorage.removeItem('ccd_token_expiration');
+                        updateConnectionUI();
+                        showToast('Session expired - please reconnect', 'warning');
+                    }
+                } else {
+                    // Have token but no file - verify token then prompt for file
+                    try {
+                        const testResponse = await fetch('https://graph.microsoft.com/v1.0/me', {
+                            headers: { 'Authorization': `Bearer ${accessToken}` }
+                        });
                         
-                        if (savedFileId && savedFilePath) {
-                            currentFileId = savedFileId;
-                            currentFilePath = savedFilePath;
-                            isConnected = true;
-                            
-                            logActivity('FULL_SESSION_RESTORED', { filePath: savedFilePath });
-                            
-                            updateConnectionUI();
-                            await loadInventoryFromOneDrive();
-                            startAutoSync();
-                            startTokenHealthCheck();
-                            return;
-                        } else {
+                        if (testResponse.ok) {
                             logActivity('TOKEN_VALID_NO_FILE', {});
                             updateConnectionUI();
                             await selectMasterFile();
                             return;
+                        } else {
+                            logActivity('SAVED_TOKEN_REJECTED', { status: testResponse.status });
+                            localStorage.removeItem('ccd_access_token');
+                            localStorage.removeItem('ccd_token_expiration');
+                            accessToken = null;
                         }
-                    } else {
-                        logActivity('SAVED_TOKEN_REJECTED', { status: testResponse.status });
+                    } catch (err) {
+                        logActivity('SAVED_TOKEN_ERROR', { error: err.message });
                         localStorage.removeItem('ccd_access_token');
                         localStorage.removeItem('ccd_token_expiration');
                         accessToken = null;
                     }
-                } catch (err) {
-                    logActivity('SAVED_TOKEN_ERROR', { error: err.message });
-                    localStorage.removeItem('ccd_access_token');
-                    localStorage.removeItem('ccd_token_expiration');
-                    accessToken = null;
                 }
             }
             
@@ -3800,6 +3819,50 @@ CHANGELOG v2.0.2 (2025-12-27):
             if (offlineQueue.length > 0) {
                 e.preventDefault();
                 e.returnValue = '';
+            }
+        });
+        
+        // Handle app coming back from background/sleep
+        document.addEventListener('visibilitychange', async function() {
+            if (document.visibilityState === 'visible') {
+                logActivity('APP_RESUMED_FROM_BACKGROUND', {});
+                
+                // Check if we should be connected but aren't
+                const savedToken = localStorage.getItem('ccd_access_token');
+                const savedExpiration = localStorage.getItem('ccd_token_expiration');
+                const savedFileId = localStorage.getItem('ccd_onedrive_file_id');
+                const savedFilePath = localStorage.getItem('ccd_onedrive_file_path');
+                
+                if (savedToken && savedExpiration && savedFileId && savedFilePath) {
+                    // We have saved connection info
+                    if (!isConnected || !accessToken) {
+                        logActivity('RESTORING_CONNECTION_AFTER_SLEEP', {});
+                        
+                        // Check if token is still valid
+                        if (parseInt(savedExpiration) > Date.now()) {
+                            accessToken = savedToken;
+                            tokenExpirationTime = parseInt(savedExpiration);
+                            currentFileId = savedFileId;
+                            currentFilePath = savedFilePath;
+                            isConnected = true;
+                            
+                            updateConnectionUI();
+                            
+                            // Reload inventory
+                            try {
+                                await loadInventoryFromOneDrive();
+                                startAutoSync();
+                                showToast('Reconnected!', 'success');
+                                logActivity('CONNECTION_RESTORED_AFTER_SLEEP', { filePath: savedFilePath });
+                            } catch (err) {
+                                logActivity('RESTORE_FAILED_AFTER_SLEEP', { error: err.message });
+                            }
+                        } else {
+                            logActivity('TOKEN_EXPIRED_DURING_SLEEP', {});
+                            showToast('Session expired - please reconnect', 'warning');
+                        }
+                    }
+                }
             }
         });
     </script>
