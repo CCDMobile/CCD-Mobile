@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
 ================================================================================
-CCD MOBILE INVENTORY MODULE v2.4.1 - PWA Edition
+CCD MOBILE INVENTORY MODULE v2.4.3 - PWA Edition
 ================================================================================
 A lightweight, mobile-optimized inventory management tool.
 Real-time sync with OneDrive - works in Safari!
@@ -1388,7 +1388,7 @@ CHANGELOG v2.0.2 (2025-12-27):
                     <div class="settings-section-title">Version</div>
                     <div class="settings-item">
                         <div class="settings-item-label">App Version</div>
-                        <div class="settings-item-value">v2.4.1</div>
+                        <div class="settings-item-value">v2.4.3</div>
                     </div>
                 </div>
             </div>
@@ -1829,7 +1829,14 @@ CHANGELOG v2.0.2 (2025-12-27):
                 clearInterval(tokenHealthCheckInterval);
             }
             
-            tokenHealthCheckInterval = setInterval(() => {
+            // Track when token was issued (for calculating 50% lifetime)
+            let tokenIssuedTime = Date.now();
+            if (tokenExpirationTime) {
+                // Estimate issue time (assuming ~75 min lifetime)
+                tokenIssuedTime = tokenExpirationTime - (75 * 60 * 1000);
+            }
+            
+            tokenHealthCheckInterval = setInterval(async () => {
                 if (!tokenExpirationTime || !isConnected) {
                     hideTokenWarning();
                     return;
@@ -1838,19 +1845,63 @@ CHANGELOG v2.0.2 (2025-12-27):
                 const now = Date.now();
                 const timeRemaining = tokenExpirationTime - now;
                 const minutesRemaining = Math.floor(timeRemaining / 60000);
+                const tokenLifetime = tokenExpirationTime - tokenIssuedTime;
+                const halfwayPoint = tokenIssuedTime + (tokenLifetime / 2);
                 
-                if (timeRemaining <= 300000) { // 5 minutes
+                // Show warning if less than 10 minutes remaining
+                if (timeRemaining <= 600000) { // 10 minutes
                     showTokenWarning(minutesRemaining);
                 } else {
                     hideTokenWarning();
                 }
                 
-                // Auto-refresh if less than 2 minutes remaining
-                if (timeRemaining <= 120000 && timeRemaining > 0) {
-                    logActivity('AUTO_TOKEN_REFRESH', { minutesRemaining });
-                    refreshToken();
+                // PROACTIVE REFRESH: Refresh at 50% of token lifetime
+                // This ensures we always have a fresh token before it expires
+                if (now >= halfwayPoint && timeRemaining > 60000) {
+                    logActivity('PROACTIVE_TOKEN_REFRESH', { 
+                        minutesRemaining,
+                        reason: 'halfway point reached'
+                    });
+                    
+                    try {
+                        await refreshToken();
+                        // Update issue time after successful refresh
+                        tokenIssuedTime = Date.now();
+                    } catch (err) {
+                        logActivity('PROACTIVE_REFRESH_FAILED', { error: err.message });
+                    }
                 }
-            }, 30000); // Check every 30 seconds
+                
+                // URGENT REFRESH: If less than 2 minutes remaining
+                if (timeRemaining <= 120000 && timeRemaining > 0) {
+                    logActivity('URGENT_TOKEN_REFRESH', { minutesRemaining });
+                    try {
+                        await refreshToken();
+                        tokenIssuedTime = Date.now();
+                    } catch (err) {
+                        logActivity('URGENT_REFRESH_FAILED', { error: err.message });
+                    }
+                }
+            }, 60000); // Check every 60 seconds
+            
+            // Also do an immediate check on startup
+            setTimeout(async () => {
+                if (tokenExpirationTime && isConnected) {
+                    const timeRemaining = tokenExpirationTime - Date.now();
+                    const minutesRemaining = Math.floor(timeRemaining / 60000);
+                    
+                    // If less than 30 minutes remaining on startup, refresh now
+                    if (timeRemaining < 1800000 && timeRemaining > 0) {
+                        logActivity('STARTUP_TOKEN_REFRESH', { minutesRemaining });
+                        try {
+                            await refreshToken();
+                            tokenIssuedTime = Date.now();
+                        } catch (err) {
+                            logActivity('STARTUP_REFRESH_FAILED', { error: err.message });
+                        }
+                    }
+                }
+            }, 5000);
         }
         
         function showTokenWarning(minutes) {
@@ -3925,33 +3976,75 @@ CHANGELOG v2.0.2 (2025-12-27):
                 const savedFileId = localStorage.getItem('ccd_onedrive_file_id');
                 const savedFilePath = localStorage.getItem('ccd_onedrive_file_path');
                 
-                if (savedToken && savedExpiration && savedFileId && savedFilePath) {
-                    // We have saved connection info
-                    if (!isConnected || !accessToken) {
-                        logActivity('RESTORING_CONNECTION_AFTER_SLEEP', {});
+                // If we have file info, try to restore connection
+                if (savedFileId && savedFilePath) {
+                    const tokenExpired = !savedExpiration || parseInt(savedExpiration) <= Date.now();
+                    
+                    if (tokenExpired || !isConnected || !accessToken) {
+                        logActivity('ATTEMPTING_TOKEN_REFRESH', { 
+                            tokenExpired: tokenExpired,
+                            wasConnected: isConnected 
+                        });
                         
-                        // Check if token is still valid
-                        if (parseInt(savedExpiration) > Date.now()) {
-                            accessToken = savedToken;
-                            tokenExpirationTime = parseInt(savedExpiration);
-                            currentFileId = savedFileId;
-                            currentFilePath = savedFilePath;
-                            isConnected = true;
+                        // Try to get a fresh token via MSAL silent refresh
+                        try {
+                            if (!msalInstance) {
+                                logActivity('MSAL_NOT_INITIALIZED', {});
+                                return;
+                            }
                             
-                            updateConnectionUI();
-                            
-                            // Reload inventory
-                            try {
+                            const accounts = msalInstance.getAllAccounts();
+                            if (accounts.length > 0) {
+                                const silentRequest = {
+                                    scopes: SCOPES,
+                                    account: accounts[0]
+                                };
+                                
+                                const response = await msalInstance.acquireTokenSilent(silentRequest);
+                                
+                                // Got new token!
+                                accessToken = response.accessToken;
+                                tokenExpirationTime = response.expiresOn.getTime();
+                                currentFileId = savedFileId;
+                                currentFilePath = savedFilePath;
+                                isConnected = true;
+                                
+                                // Save new token
+                                localStorage.setItem('ccd_access_token', accessToken);
+                                localStorage.setItem('ccd_token_expiration', tokenExpirationTime.toString());
+                                
+                                logActivity('TOKEN_REFRESHED_ON_RESUME', { 
+                                    expiresIn: Math.floor((tokenExpirationTime - Date.now()) / 60000) + ' minutes'
+                                });
+                                
+                                updateConnectionUI();
+                                
+                                // Reload inventory
                                 await loadInventoryFromOneDrive();
                                 startAutoSync();
-                                showToast('Reconnected!', 'success');
-                                logActivity('CONNECTION_RESTORED_AFTER_SLEEP', { filePath: savedFilePath });
-                            } catch (err) {
-                                logActivity('RESTORE_FAILED_AFTER_SLEEP', { error: err.message });
+                                showToast('Session refreshed!', 'success');
+                                
+                            } else {
+                                logActivity('NO_MSAL_ACCOUNTS_ON_RESUME', {});
+                                showToast('Session expired - please reconnect', 'warning');
+                                updateConnectionUI();
                             }
-                        } else {
-                            logActivity('TOKEN_EXPIRED_DURING_SLEEP', {});
+                        } catch (err) {
+                            logActivity('TOKEN_REFRESH_FAILED_ON_RESUME', { error: err.message });
+                            
+                            // Clear bad state
+                            isConnected = false;
+                            accessToken = null;
+                            updateConnectionUI();
                             showToast('Session expired - please reconnect', 'warning');
+                        }
+                    } else {
+                        // Token still valid, just reload inventory to make sure it's fresh
+                        try {
+                            await loadInventoryFromOneDrive();
+                            logActivity('INVENTORY_RELOADED_ON_RESUME', {});
+                        } catch (err) {
+                            logActivity('RELOAD_FAILED_ON_RESUME', { error: err.message });
                         }
                     }
                 }

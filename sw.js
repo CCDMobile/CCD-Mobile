@@ -1,5 +1,5 @@
-// CCD Mobile Inventory Service Worker v2.4.0
-const CACHE_NAME = 'ccd-mobile-v2.4.0';
+// CCD Mobile Inventory Service Worker v2.4.3
+const CACHE_NAME = 'ccd-mobile-v2.4.3';
 const OFFLINE_URLS = [
   './',
   './index.html',
