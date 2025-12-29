@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
 ================================================================================
-CCD MOBILE INVENTORY MODULE v2.3.8 - OneDrive Sync Edition
+CCD MOBILE INVENTORY MODULE v2.4.1 - PWA Edition
 ================================================================================
 A lightweight, mobile-optimized inventory management tool.
 Real-time sync with OneDrive - works in Safari!
@@ -118,6 +118,16 @@ CHANGELOG v2.0.2 (2025-12-27):
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>CCD Mobile Inventory</title>
+    
+    <!-- PWA Support -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="CCD Inventory">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="theme-color" content="#6366F1">
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" href="icon-192.png">
+    
     <style>
         :root {
             --primary: #4F46E5;
@@ -338,6 +348,21 @@ CHANGELOG v2.0.2 (2025-12-27):
         @keyframes pulse {
             0%, 100% { opacity: 1; }
             50% { opacity: 0.5; }
+        }
+
+        /* Offline Banner */
+        .offline-banner {
+            display: none;
+            background: linear-gradient(135deg, #F59E0B 0%, #D97706 100%);
+            color: white;
+            padding: 8px 20px;
+            text-align: center;
+            font-weight: 600;
+            font-size: 14px;
+        }
+        
+        .offline-banner.show {
+            display: block;
         }
 
         /* Search Bar */
@@ -1171,6 +1196,11 @@ CHANGELOG v2.0.2 (2025-12-27):
 
     <!-- Main App -->
     <div class="app-container" id="appContainer">
+        <!-- Offline Banner -->
+        <div class="offline-banner" id="offlineBanner">
+            📡 Offline Mode - Changes will sync when connected
+        </div>
+        
         <!-- Header -->
         <div class="header">
             <div class="header-top">
@@ -1358,7 +1388,7 @@ CHANGELOG v2.0.2 (2025-12-27):
                     <div class="settings-section-title">Version</div>
                     <div class="settings-item">
                         <div class="settings-item-label">App Version</div>
-                        <div class="settings-item-value">v2.3.8</div>
+                        <div class="settings-item-value">v2.4.1</div>
                     </div>
                 </div>
             </div>
@@ -2013,13 +2043,10 @@ CHANGELOG v2.0.2 (2025-12-27):
                         return;
                     } catch (err) {
                         logActivity('RESTORE_LOAD_FAILED', { error: err.message });
-                        // Token might be bad, clear and let user reconnect
+                        // Token might be bad, try to refresh via MSAL
                         isConnected = false;
                         accessToken = null;
-                        localStorage.removeItem('ccd_access_token');
-                        localStorage.removeItem('ccd_token_expiration');
-                        updateConnectionUI();
-                        showToast('Session expired - please reconnect', 'warning');
+                        // Don't clear localStorage yet - try MSAL refresh below
                     }
                 } else {
                     // Have token but no file - verify token then prompt for file
@@ -2035,20 +2062,21 @@ CHANGELOG v2.0.2 (2025-12-27):
                             return;
                         } else {
                             logActivity('SAVED_TOKEN_REJECTED', { status: testResponse.status });
-                            localStorage.removeItem('ccd_access_token');
-                            localStorage.removeItem('ccd_token_expiration');
                             accessToken = null;
                         }
                     } catch (err) {
                         logActivity('SAVED_TOKEN_ERROR', { error: err.message });
-                        localStorage.removeItem('ccd_access_token');
-                        localStorage.removeItem('ccd_token_expiration');
                         accessToken = null;
                     }
                 }
+            } else if (savedExpiration && parseInt(savedExpiration) <= Date.now() && savedFileId && savedFilePath) {
+                // Token expired but we have file info - try to refresh via MSAL
+                logActivity('SAVED_TOKEN_EXPIRED_TRYING_REFRESH', {
+                    expiredMinutesAgo: Math.floor((Date.now() - parseInt(savedExpiration)) / 60000)
+                });
             }
             
-            // Try silent login from MSAL accounts
+            // Try silent login from MSAL accounts (refresh token)
             const accounts = msalInstance.getAllAccounts();
             logActivity('CHECKING_MSAL_ACCOUNTS', { count: accounts.length });
             
@@ -2081,6 +2109,7 @@ CHANGELOG v2.0.2 (2025-12-27):
                         await loadInventoryFromOneDrive();
                         startAutoSync();
                         startTokenHealthCheck();
+                        showToast('Session restored!', 'success');
                     } else {
                         updateConnectionUI();
                         await selectMasterFile();
@@ -2391,6 +2420,11 @@ CHANGELOG v2.0.2 (2025-12-27):
             // Check if we might have accounts but no token (incomplete auth)
             const hasAccounts = msalInstance && msalInstance.getAllAccounts().length > 0;
             
+            // Check if we have saved file info (for quick reconnect)
+            const savedFileId = localStorage.getItem('ccd_onedrive_file_id');
+            const savedFilePath = localStorage.getItem('ccd_onedrive_file_path');
+            const hasSavedFileInfo = savedFileId && savedFilePath;
+            
             if (isConnected && currentFilePath) {
                 statusDiv.className = 'onedrive-status connected';
                 statusText.textContent = 'Connected';
@@ -2411,17 +2445,24 @@ CHANGELOG v2.0.2 (2025-12-27):
                 disconnectBtn.style.display = 'block';
                 changeMasterBtn.style.display = 'none';
                 filePathInfo.style.display = 'none';
-            } else if (hasAccounts) {
-                // Have accounts but no token - might be able to get token silently
+            } else if (hasAccounts || hasSavedFileInfo) {
+                // Have accounts or saved file info - can try quick reconnect
                 statusDiv.className = 'onedrive-status disconnected';
-                statusText.textContent = 'Session Found - Tap Retry';
+                statusText.textContent = hasSavedFileInfo ? 'Tap to Reconnect' : 'Session Found - Tap Retry';
                 connectBtn.innerHTML = '<span>📁</span><span>Connect to OneDrive</span>';
                 connectBtn.onclick = connectToOneDrive;
                 connectBtn.style.display = 'block';
+                retryBtn.innerHTML = '<span>🔄</span><span>Quick Reconnect</span>';
                 retryBtn.style.display = 'block';
                 disconnectBtn.style.display = 'block';
                 changeMasterBtn.style.display = 'none';
                 filePathInfo.style.display = 'none';
+                
+                // Show saved file path hint
+                if (hasSavedFileInfo) {
+                    filePathInfo.style.display = 'block';
+                    currentFilePathSpan.textContent = savedFilePath + ' (disconnected)';
+                }
             } else {
                 statusDiv.className = 'onedrive-status disconnected';
                 statusText.textContent = 'Not Connected';
@@ -2667,9 +2708,9 @@ CHANGELOG v2.0.2 (2025-12-27):
         
         function checkPin() {
             if (pinInput === CORRECT_PIN) {
-                // Store auth with 24-hour expiry
+                // Store auth with 7-day expiry (was 24 hours)
                 localStorage.setItem('ccd_mobile_auth', 'true');
-                localStorage.setItem('ccd_mobile_auth_expiry', (Date.now() + 24 * 60 * 60 * 1000).toString());
+                localStorage.setItem('ccd_mobile_auth_expiry', (Date.now() + 7 * 24 * 60 * 60 * 1000).toString());
                 
                 document.getElementById('pinScreen').classList.add('hidden');
                 document.getElementById('appContainer').classList.add('active');
@@ -3771,11 +3812,25 @@ CHANGELOG v2.0.2 (2025-12-27):
             
             logActivity('APP_OPENED', { url: window.location.href });
             
+            // Log what's in localStorage for debugging
+            const savedToken = localStorage.getItem('ccd_access_token');
+            const savedExpiration = localStorage.getItem('ccd_token_expiration');
+            const savedFileId = localStorage.getItem('ccd_onedrive_file_id');
+            const savedFilePath = localStorage.getItem('ccd_onedrive_file_path');
+            
+            logActivity('LOCALSTORAGE_STATE', {
+                hasToken: !!savedToken,
+                hasExpiration: !!savedExpiration,
+                tokenExpired: savedExpiration ? parseInt(savedExpiration) < Date.now() : 'N/A',
+                hasFileId: !!savedFileId,
+                hasFilePath: !!savedFilePath
+            });
+            
             // Check if already authenticated (use localStorage to persist across sessions)
             const authenticated = localStorage.getItem('ccd_mobile_auth');
             const authExpiry = localStorage.getItem('ccd_mobile_auth_expiry');
             
-            // Auth expires after 24 hours for security
+            // Auth expires after 7 days for security
             const isAuthValid = authenticated === 'true' && authExpiry && parseInt(authExpiry) > Date.now();
             
             if (isAuthValid) {
@@ -3786,6 +3841,8 @@ CHANGELOG v2.0.2 (2025-12-27):
                 
                 // Initialize MSAL and try to auto-connect
                 initializeMsal().then(() => {
+                    logActivity('MSAL_INIT_COMPLETE', { isConnected: isConnected, hasToken: !!accessToken });
+                    
                     if (!isConnected) {
                         loadFromStorage();
                     }
@@ -3799,6 +3856,8 @@ CHANGELOG v2.0.2 (2025-12-27):
                             setTimeout(syncOfflineQueue, 2000);
                         }
                     }
+                }).catch(err => {
+                    logActivity('MSAL_INIT_ERROR', { error: err.message });
                 });
             } else {
                 // Clear old auth
@@ -3811,6 +3870,39 @@ CHANGELOG v2.0.2 (2025-12-27):
             if (lastSync) {
                 lastSyncTime = new Date(lastSync);
                 document.getElementById('lastSyncDate').textContent = formatTime(lastSyncTime);
+            }
+        });
+        
+        // Handle page being restored from back-forward cache (iOS Safari)
+        window.addEventListener('pageshow', function(event) {
+            if (event.persisted) {
+                // Page was restored from bfcache
+                logActivity('PAGE_RESTORED_FROM_CACHE', {});
+                
+                // Check if we should be connected
+                const savedToken = localStorage.getItem('ccd_access_token');
+                const savedExpiration = localStorage.getItem('ccd_token_expiration');
+                const savedFileId = localStorage.getItem('ccd_onedrive_file_id');
+                const savedFilePath = localStorage.getItem('ccd_onedrive_file_path');
+                
+                if (savedToken && savedExpiration && savedFileId && savedFilePath) {
+                    if (parseInt(savedExpiration) > Date.now() && !isConnected) {
+                        logActivity('RESTORING_FROM_BFCACHE', {});
+                        
+                        accessToken = savedToken;
+                        tokenExpirationTime = parseInt(savedExpiration);
+                        currentFileId = savedFileId;
+                        currentFilePath = savedFilePath;
+                        isConnected = true;
+                        
+                        updateConnectionUI();
+                        loadInventoryFromOneDrive().then(() => {
+                            showToast('Reconnected!', 'success');
+                        }).catch(err => {
+                            logActivity('BFCACHE_RESTORE_FAILED', { error: err.message });
+                        });
+                    }
+                }
             }
         });
         
@@ -3865,6 +3957,48 @@ CHANGELOG v2.0.2 (2025-12-27):
                 }
             }
         });
+        
+        // Register Service Worker for offline support
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./sw.js')
+                    .then(registration => {
+                        console.log('SW registered:', registration.scope);
+                        logActivity('SERVICE_WORKER_REGISTERED', { scope: registration.scope });
+                    })
+                    .catch(error => {
+                        console.log('SW registration failed:', error);
+                        logActivity('SERVICE_WORKER_FAILED', { error: error.message });
+                    });
+            });
+        }
+        
+        // Handle online/offline events
+        function updateOnlineStatus() {
+            const offlineBanner = document.getElementById('offlineBanner');
+            if (navigator.onLine) {
+                offlineBanner.classList.remove('show');
+                logActivity('NETWORK_ONLINE', {});
+                
+                // Try to sync queued changes
+                if (offlineQueue.length > 0 && isConnected) {
+                    showToast('Back online - syncing changes...', 'success');
+                    setTimeout(syncOfflineQueue, 1000);
+                }
+            } else {
+                offlineBanner.classList.add('show');
+                logActivity('NETWORK_OFFLINE', {});
+                showToast('Working offline - changes will sync later', 'warning');
+            }
+        }
+        
+        window.addEventListener('online', updateOnlineStatus);
+        window.addEventListener('offline', updateOnlineStatus);
+        
+        // Check initial status
+        if (!navigator.onLine) {
+            document.getElementById('offlineBanner').classList.add('show');
+        }
     </script>
 </body>
 </html>
