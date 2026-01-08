@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
 ================================================================================
-CCD MOBILE INVENTORY MODULE v2.4.3 - PWA Edition
+CCD MOBILE INVENTORY MODULE v2.4.4 - PWA Edition
 ================================================================================
 A lightweight, mobile-optimized inventory management tool.
 Real-time sync with OneDrive - works in Safari!
@@ -1388,7 +1388,7 @@ CHANGELOG v2.0.2 (2025-12-27):
                     <div class="settings-section-title">Version</div>
                     <div class="settings-item">
                         <div class="settings-item-label">App Version</div>
-                        <div class="settings-item-value">v2.4.3</div>
+                        <div class="settings-item-value">v2.4.4</div>
                     </div>
                 </div>
             </div>
@@ -2641,7 +2641,7 @@ CHANGELOG v2.0.2 (2025-12-27):
         
         async function saveInventoryToOneDrive() {
             if (!accessToken || !currentFileId) {
-                logActivity('SAVE_FAILED_NO_AUTH', {});
+                logActivity('SAVE_FAILED_NO_AUTH', { hasToken: !!accessToken, hasFileId: !!currentFileId });
                 addToOfflineQueue({ type: 'full_save', inventory: inventory });
                 return;
             }
@@ -2650,6 +2650,13 @@ CHANGELOG v2.0.2 (2025-12-27):
                 updateSyncStatus('Saving...', true);
                 
                 const jsonData = JSON.stringify({ inventory: inventory }, null, 2);
+                
+                logActivity('SAVE_ATTEMPT', { 
+                    fileId: currentFileId,
+                    filePath: currentFilePath,
+                    dataSize: jsonData.length,
+                    itemCount: inventory.length
+                });
                 
                 const response = await fetch(`https://graph.microsoft.com/v1.0/me/drive/items/${currentFileId}/content`, {
                     method: 'PUT',
@@ -2660,13 +2667,26 @@ CHANGELOG v2.0.2 (2025-12-27):
                     body: jsonData
                 });
                 
+                // Get response details for logging
+                const responseData = await response.json().catch(() => null);
+                
                 if (!response.ok) {
+                    logActivity('SAVE_HTTP_ERROR', { 
+                        status: response.status, 
+                        statusText: response.statusText,
+                        responseData: responseData
+                    });
                     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
                 }
                 
+                // Log the OneDrive response which includes file metadata
                 logActivity('INVENTORY_SAVED', { 
                     itemCount: inventory.length,
-                    destination: 'OneDrive'
+                    destination: 'OneDrive',
+                    responseFileId: responseData?.id,
+                    responseFileName: responseData?.name,
+                    responseModified: responseData?.lastModifiedDateTime,
+                    responseSize: responseData?.size
                 });
                 
                 updateSyncStatus('Synced', false);
@@ -2678,7 +2698,7 @@ CHANGELOG v2.0.2 (2025-12-27):
                 return true;
                 
             } catch (err) {
-                logActivity('SAVE_ERROR', { error: err.message });
+                logActivity('SAVE_ERROR', { error: err.message, stack: err.stack });
                 updateSyncStatus('Save failed', false);
                 showToast('Save failed: ' + err.message, 'error');
                 
