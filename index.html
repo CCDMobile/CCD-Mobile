@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
 ================================================================================
-CCD MOBILE INVENTORY MODULE v2.4.4 - PWA Edition
+CCD MOBILE INVENTORY MODULE v2.5.0 - PWA Edition
 ================================================================================
 A lightweight, mobile-optimized inventory management tool.
 Real-time sync with OneDrive - works in Safari!
@@ -1258,22 +1258,32 @@ CHANGELOG v2.0.2 (2025-12-27):
             <div class="modal-body">
                 <div class="form-group">
                     <label class="form-label">Product Name</label>
-                    <input type="text" class="form-input" id="editProductName" disabled>
+                    <input type="text" class="form-input" id="editProductName">
                 </div>
                 
                 <div class="form-group">
                     <label class="form-label">SKU</label>
-                    <input type="text" class="form-input" id="editSku" disabled>
+                    <input type="text" class="form-input" id="editSku">
                 </div>
                 
                 <div class="form-group">
                     <label class="form-label">Brand</label>
-                    <input type="text" class="form-input" id="editBrand" disabled>
+                    <input type="text" class="form-input" id="editBrand">
                 </div>
                 
-                <div class="form-group">
-                    <label class="form-label">Retail Price</label>
-                    <input type="text" class="form-input" id="editRetailPrice" disabled>
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;">
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label class="form-label">Warehouse Qty</label>
+                        <input type="number" class="form-input" id="editQty" min="0" style="font-weight: 600; font-size: 18px;">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label class="form-label">Wholesale $</label>
+                        <input type="number" class="form-input" id="editWholesalePrice" min="0" step="0.01">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label class="form-label">Retail $</label>
+                        <input type="number" class="form-input" id="editRetailPrice" min="0" step="0.01">
+                    </div>
                 </div>
                 
                 <div class="form-group">
@@ -1297,9 +1307,6 @@ CHANGELOG v2.0.2 (2025-12-27):
                         </div>
                     </div>
                     <div class="total-qty-display">
-                        <div style="margin-bottom: 8px;">
-                            <strong>Warehouse Qty:</strong> <span class="total-qty-number" id="warehouseQtyDisplay">0</span>
-                        </div>
                         <div style="font-size: 13px;">
                             Allocated to Channels: <span id="totalQtyDisplay" style="font-weight: 600;">0</span>
                         </div>
@@ -1388,7 +1395,7 @@ CHANGELOG v2.0.2 (2025-12-27):
                     <div class="settings-section-title">Version</div>
                     <div class="settings-item">
                         <div class="settings-item-label">App Version</div>
-                        <div class="settings-item-value">v2.4.4</div>
+                        <div class="settings-item-value">v2.5.0</div>
                     </div>
                 </div>
             </div>
@@ -2968,23 +2975,19 @@ CHANGELOG v2.0.2 (2025-12-27):
                 return;
             }
             
-            // Use retail price directly from the item
-            const retailPrice = parseFloat(currentItem.retailPrice) || 0;
-            
+            // Populate all editable fields
             document.getElementById('editProductName').value = currentItem.productName || '';
             document.getElementById('editSku').value = currentItem.sku || '';
             document.getElementById('editBrand').value = currentItem.brandName || '';
-            document.getElementById('editRetailPrice').value = '$' + retailPrice.toFixed(2);
+            document.getElementById('editQty').value = parseInt(currentItem.qty) || 0;
+            document.getElementById('editWholesalePrice').value = parseFloat(currentItem.wholesalePrice) || 0;
+            document.getElementById('editRetailPrice').value = parseFloat(currentItem.retailPrice) || 0;
             
             const channels = currentItem.channels || {};
             document.getElementById('editEtsy').value = channels.etsy || 0;
             document.getElementById('editWix').value = channels.wix || 0;
             document.getElementById('editWayfair').value = channels.wayfair || 0;
             document.getElementById('editTreasureMarts').value = channels.treasuremarts || 0;
-            
-            // Show warehouse qty (from master JSON qty field)
-            const warehouseQty = parseInt(currentItem.qty) || 0;
-            document.getElementById('warehouseQtyDisplay').textContent = warehouseQty;
             
             updateTotalQty();
             
@@ -3015,12 +3018,37 @@ CHANGELOG v2.0.2 (2025-12-27):
         async function saveItem() {
             if (!currentItem) return;
             
+            // Get all editable field values
+            const newProductName = document.getElementById('editProductName').value.trim();
+            const newSku = document.getElementById('editSku').value.trim();
+            const newBrand = document.getElementById('editBrand').value.trim();
+            const newQty = parseInt(document.getElementById('editQty').value) || 0;
+            const newWholesalePrice = parseFloat(document.getElementById('editWholesalePrice').value) || 0;
+            const newRetailPrice = parseFloat(document.getElementById('editRetailPrice').value) || 0;
+            
             const newAllocations = {
                 etsy: parseInt(document.getElementById('editEtsy').value) || 0,
                 wix: parseInt(document.getElementById('editWix').value) || 0,
                 wayfair: parseInt(document.getElementById('editWayfair').value) || 0,
                 treasuremarts: parseInt(document.getElementById('editTreasureMarts').value) || 0
             };
+            
+            // Track what changed for logging
+            const changes = {};
+            if (currentItem.productName !== newProductName) changes.productName = { old: currentItem.productName, new: newProductName };
+            if (currentItem.sku !== newSku) changes.sku = { old: currentItem.sku, new: newSku };
+            if (currentItem.brandName !== newBrand) changes.brandName = { old: currentItem.brandName, new: newBrand };
+            if (currentItem.qty !== newQty) changes.qty = { old: currentItem.qty, new: newQty };
+            if (currentItem.wholesalePrice !== newWholesalePrice) changes.wholesalePrice = { old: currentItem.wholesalePrice, new: newWholesalePrice };
+            if (currentItem.retailPrice !== newRetailPrice) changes.retailPrice = { old: currentItem.retailPrice, new: newRetailPrice };
+            
+            // Update all fields
+            currentItem.productName = newProductName;
+            currentItem.sku = newSku;
+            currentItem.brandName = newBrand;
+            currentItem.qty = newQty;
+            currentItem.wholesalePrice = newWholesalePrice;
+            currentItem.retailPrice = newRetailPrice;
             
             // Preserve existing channels that aren't in the mobile app (like crazychicks)
             currentItem.channels = {
@@ -3030,8 +3058,9 @@ CHANGELOG v2.0.2 (2025-12-27):
             
             logActivity('ITEM_EDITED', { 
                 itemId: currentItem.id, 
-                sku: currentItem.sku,
-                newAllocations: newAllocations 
+                sku: newSku,
+                newAllocations: newAllocations,
+                fieldChanges: Object.keys(changes).length > 0 ? changes : 'allocations only'
             });
             
             applyFilters();
@@ -3044,7 +3073,8 @@ CHANGELOG v2.0.2 (2025-12-27):
                 addToOfflineQueue({
                     type: 'edit',
                     itemId: currentItem.id,
-                    newAllocations: newAllocations
+                    newAllocations: newAllocations,
+                    fieldChanges: changes
                 });
             }
             
