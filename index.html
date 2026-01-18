@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
 ================================================================================
-CCD MOBILE INVENTORY MODULE v2.5.1 - PWA Edition
+CCD MOBILE INVENTORY MODULE v2.5.2 - PWA Edition
 ================================================================================
 A lightweight, mobile-optimized inventory management tool.
 Real-time sync with OneDrive - works in Safari!
@@ -21,6 +21,15 @@ Usage:
 2. Enter PIN to access
 3. Tap "Connect to OneDrive" and sign in with Microsoft
 4. Make changes and tap Save - syncs automatically!
+
+CHANGELOG v2.5.2 (2026-01-17):
+- FIX: Sync reliability between mobile and desktop
+- Changed from file ID-based loading to path-based loading
+- Path never changes; file ID can change when file is modified
+- This ensures mobile always loads the latest version from OneDrive
+- Activity log now shows "LOAD_VIA_PATH" for debugging
+- NEW: TreasureMart audit reports now saved to OneDrive for desktop access
+- Audit reports saved to: /Country Charm/Reports/TreasureMart-Audits/
 
 CHANGELOG v2.3.4 (2025-12-28):
 - FIX: PDF report now has "Back to App" button at top
@@ -2602,7 +2611,9 @@ CHANGELOG v2.0.2 (2025-12-27):
         // ============================================================================
         
         async function loadInventoryFromOneDrive() {
-            if (!accessToken || !currentFileId) {
+            // v2.5.2: Use path-based loading for reliable sync
+            // Path never changes, but file ID can change with each save
+            if (!accessToken || (!currentFilePath && !currentFileId)) {
                 logActivity('LOAD_FAILED_NO_AUTH', {});
                 return;
             }
@@ -2610,11 +2621,28 @@ CHANGELOG v2.0.2 (2025-12-27):
             try {
                 updateSyncStatus('Loading...', true);
                 
-                const response = await fetch(`https://graph.microsoft.com/v1.0/me/drive/items/${currentFileId}/content`, {
-                    headers: {
-                        'Authorization': `Bearer ${accessToken}`
-                    }
-                });
+                let response;
+                
+                // PREFER path-based loading (more reliable for sync)
+                if (currentFilePath) {
+                    const encodedPath = encodeURIComponent(currentFilePath);
+                    response = await fetch(`https://graph.microsoft.com/v1.0/me/drive/root:${encodedPath}:/content`, {
+                        headers: {
+                            'Authorization': `Bearer ${accessToken}`
+                        }
+                    });
+                    
+                    logActivity('LOAD_VIA_PATH', { path: currentFilePath });
+                } else {
+                    // Fallback to file ID if no path (shouldn't happen normally)
+                    response = await fetch(`https://graph.microsoft.com/v1.0/me/drive/items/${currentFileId}/content`, {
+                        headers: {
+                            'Authorization': `Bearer ${accessToken}`
+                        }
+                    });
+                    
+                    logActivity('LOAD_VIA_ID_FALLBACK', { fileId: currentFileId });
+                }
                 
                 if (!response.ok) {
                     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -2627,7 +2655,8 @@ CHANGELOG v2.0.2 (2025-12-27):
                 
                 logActivity('INVENTORY_LOADED', { 
                     itemCount: inventory.length,
-                    source: 'OneDrive'
+                    source: 'OneDrive',
+                    method: currentFilePath ? 'path' : 'fileId'
                 });
                 
                 applyFilters();
@@ -3544,6 +3573,9 @@ CHANGELOG v2.0.2 (2025-12-27):
             if (isConnected) {
                 const saved = await saveInventoryToOneDrive();
                 if (saved) {
+                    // v2.5.2: Also save the audit report for desktop access
+                    await saveAuditReportToOneDrive();
+                    
                     // Clear the audit changes (keep the checkmarks for reference)
                     auditChanges = [];
                     showToast(`Saved! ${missingItems.length} item(s) deducted from inventory`, 'success');
@@ -3569,6 +3601,110 @@ CHANGELOG v2.0.2 (2025-12-27):
         function closeTreasureMartModalOutside(event) {
             if (event.target === event.currentTarget) {
                 closeTreasureMartModal();
+            }
+        }
+        
+        // ============================================================================
+        // AUDIT REPORT SAVE TO ONEDRIVE (v2.5.2)
+        // Saves a permanent record of the audit for desktop access
+        // ============================================================================
+        
+        async function saveAuditReportToOneDrive() {
+            if (!isConnected || !accessToken) {
+                logActivity('AUDIT_REPORT_SKIP_NOT_CONNECTED', {});
+                return false;
+            }
+            
+            try {
+                // Gather audit data
+                const auditDate = new Date().toISOString();
+                const dateStr = auditDate.split('T')[0]; // YYYY-MM-DD
+                
+                const foundItems = [];
+                const missingItems = [];
+                let foundValue = 0;
+                let missingValue = 0;
+                
+                for (const [itemId, status] of Object.entries(treasureMartAudit)) {
+                    const item = inventory.find(i => String(i.id) === String(itemId));
+                    if (item) {
+                        const price = calculateChannelPrice(item, 'treasuremarts');
+                        const qty = item.channels?.treasuremarts || 0;
+                        
+                        const itemData = {
+                            id: item.id,
+                            sku: item.sku || 'N/A',
+                            productName: item.productName || 'Unknown',
+                            brandName: item.brandName || 'Unknown',
+                            shelfNumber: item.shelfNumber || 'N/A',
+                            qty: qty,
+                            price: price,
+                            lineTotal: qty * price
+                        };
+                        
+                        if (status === 'found') {
+                            foundItems.push(itemData);
+                            foundValue += itemData.lineTotal;
+                        } else if (status === 'missing') {
+                            missingItems.push(itemData);
+                            missingValue += price; // Missing is 1 item
+                        }
+                    }
+                }
+                
+                // Build audit report
+                const auditReport = {
+                    _reportType: 'TreasureMartAudit',
+                    _version: '1.0',
+                    auditDate: auditDate,
+                    auditDateFormatted: new Date().toLocaleDateString('en-US', { 
+                        weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' 
+                    }),
+                    summary: {
+                        totalItemsAudited: foundItems.length + missingItems.length,
+                        foundCount: foundItems.length,
+                        missingCount: missingItems.length,
+                        foundValue: foundValue,
+                        missingValue: missingValue,
+                        totalValueAfterAudit: foundValue
+                    },
+                    foundItems: foundItems,
+                    missingItems: missingItems
+                };
+                
+                // Save to OneDrive in Reports folder
+                const reportPath = `/Country Charm/Reports/TreasureMart-Audits/Audit-${dateStr}.json`;
+                const encodedPath = encodeURIComponent(reportPath);
+                const jsonData = JSON.stringify(auditReport, null, 2);
+                
+                const response = await fetch(`https://graph.microsoft.com/v1.0/me/drive/root:${encodedPath}:/content`, {
+                    method: 'PUT',
+                    headers: {
+                        'Authorization': `Bearer ${accessToken}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: jsonData
+                });
+                
+                if (response.ok) {
+                    logActivity('AUDIT_REPORT_SAVED', {
+                        path: reportPath,
+                        foundCount: foundItems.length,
+                        missingCount: missingItems.length,
+                        missingValue: missingValue.toFixed(2)
+                    });
+                    return true;
+                } else {
+                    logActivity('AUDIT_REPORT_SAVE_FAILED', {
+                        status: response.status,
+                        statusText: response.statusText
+                    });
+                    return false;
+                }
+                
+            } catch (err) {
+                logActivity('AUDIT_REPORT_ERROR', { error: err.message });
+                return false;
             }
         }
         
