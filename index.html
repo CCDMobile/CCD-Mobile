@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
 ================================================================================
-CCD MOBILE INVENTORY MODULE v2.5.2 - PWA Edition
+CCD MOBILE INVENTORY MODULE v2.5.4 - PWA Edition
 ================================================================================
 A lightweight, mobile-optimized inventory management tool.
 Real-time sync with OneDrive - works in Safari!
@@ -12,7 +12,7 @@ Features:
 - Search inventory by SKU, product name, or brand
 - View and edit channel allocations (Etsy, Wix, Wayfair, TreasureMarts)
 - Quick "Mark as Sold" with full sale details capture
-- TreasureMart Inventory Audit with Found/Missing tracking
+- TreasureMart Inventory Audit with Found/Missing/Partial/Removed tracking
 - Auto-sync every 30 seconds
 - Change Master File location
 
@@ -21,6 +21,27 @@ Usage:
 2. Enter PIN to access
 3. Tap "Connect to OneDrive" and sign in with Microsoft
 4. Make changes and tap Save - syncs automatically!
+
+CHANGELOG v2.5.4 (2026-01-19):
+- NEW: Enhanced TM Audit with partial quantity support
+- NEW: Qty stepper - defaults to expected, step down for partial finds
+- NEW: Four status options: Found, Missing, Partial, Removed
+- NEW: "Removed" moves items back to warehouse inventory
+- NEW: Per-audit notes with quick-note buttons (Damaged, Wrong Price, Sold)
+- NEW: Net Profit Margin % displayed on TM cards
+- NEW: OB Shipping displayed on main item cards (SKU | Brand | OB: $X.XX)
+- CHANGED: TM card shows Brand Name instead of Shelf #
+- CHANGED: PDF/Excel export columns: Status, Brand, Product, SKU, Qty, TM Price, Margin
+- CHANGED: Audit report format v2.0 with full item details
+- Backward compatible with existing audit data
+
+CHANGELOG v2.5.3 (2026-01-18):
+- NEW: Auto-adjustment of channel allocations after sales
+- Etsy and Wix now always sync together automatically
+- Online channels (Etsy, Wix, Wayfair) cannot exceed warehouse qty
+- Validation blocks over-allocation on manual edits
+- Channel PAR alerts when Etsy/Wix drops to trigger level
+- Master PAR alerts when warehouse drops below minimum
 
 CHANGELOG v2.5.2 (2026-01-17):
 - FIX: Sync reliability between mobile and desktop
@@ -1434,24 +1455,32 @@ CHANGELOG v2.0.2 (2025-12-27):
     <div class="modal" id="treasureMartModal" onclick="closeTreasureMartModalOutside(event)">
         <div class="modal-content" style="max-width: 600px; max-height: 95vh;">
             <div class="modal-header" style="background: linear-gradient(135deg, #10B981 0%, #059669 100%); color: white;">
-                <div class="modal-title">📊 TreasureMart Inventory</div>
+                <div class="modal-title">📊 TreasureMart Inventory Audit</div>
                 <button class="modal-close" onclick="closeTreasureMartModal()" style="color: white;">×</button>
             </div>
             <div class="modal-body" style="padding: 0;">
                 <!-- Stats Bar -->
                 <div style="padding: 12px 15px; background: #F0FDF4; border-bottom: 1px solid #D1FAE5;">
-                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; text-align: center;">
+                    <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; text-align: center;">
                         <div>
-                            <div style="font-size: 11px; color: #059669;">Total Items</div>
-                            <div style="font-size: 20px; font-weight: 700; color: #047857;" id="tmTotalItems">0</div>
+                            <div style="font-size: 10px; color: #059669;">Expected</div>
+                            <div style="font-size: 18px; font-weight: 700; color: #047857;" id="tmTotalItems">0</div>
                         </div>
                         <div>
-                            <div style="font-size: 11px; color: #059669;">Checked</div>
-                            <div style="font-size: 20px; font-weight: 700; color: #047857;" id="tmCheckedCount">0</div>
+                            <div style="font-size: 10px; color: #10B981;">Found</div>
+                            <div style="font-size: 18px; font-weight: 700; color: #10B981;" id="tmCheckedCount">0</div>
                         </div>
                         <div>
-                            <div style="font-size: 11px; color: #DC2626;">Missing</div>
-                            <div style="font-size: 20px; font-weight: 700; color: #DC2626;" id="tmMissingCount">0</div>
+                            <div style="font-size: 10px; color: #F59E0B;">Partial</div>
+                            <div style="font-size: 18px; font-weight: 700; color: #F59E0B;" id="tmPartialCount">0</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 10px; color: #DC2626;">Missing</div>
+                            <div style="font-size: 18px; font-weight: 700; color: #DC2626;" id="tmMissingCount">0</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 10px; color: #3B82F6;">Removed</div>
+                            <div style="font-size: 18px; font-weight: 700; color: #3B82F6;" id="tmRemovedCount">0</div>
                         </div>
                     </div>
                     <div style="margin-top: 8px; text-align: center;">
@@ -1464,7 +1493,7 @@ CHANGELOG v2.0.2 (2025-12-27):
                 <div style="padding: 10px 15px; background: #F9FAFB; border-bottom: 1px solid #E5E7EB; display: flex; flex-wrap: wrap; gap: 8px;">
                     <button class="btn" onclick="exportTreasureMartPDF()" style="flex: 1; min-width: 100px; font-size: 13px; padding: 10px; background: #3B82F6; color: white;">📄 Print/PDF</button>
                     <button class="btn" onclick="exportTreasureMartExcel()" style="flex: 1; min-width: 100px; font-size: 13px; padding: 10px; background: #10B981; color: white;">📊 Excel</button>
-                    <button class="btn" onclick="showMissingItemsReport()" style="flex: 1; min-width: 100px; font-size: 13px; padding: 10px; background: #DC2626; color: white;">⚠️ Missing</button>
+                    <button class="btn" onclick="showMissingItemsReport()" style="flex: 1; min-width: 100px; font-size: 13px; padding: 10px; background: #DC2626; color: white;">⚠️ Issues</button>
                 </div>
                 
                 <!-- Inventory List -->
@@ -1472,8 +1501,8 @@ CHANGELOG v2.0.2 (2025-12-27):
                 
                 <!-- Footer Actions -->
                 <div style="padding: 10px 15px; border-top: 1px solid #E5E7EB; display: flex; gap: 8px;">
-                    <button class="btn btn-secondary" onclick="resetTreasureMartAudit()" style="flex: 1; font-size: 13px;">🔄 Reset Audit</button>
-                    <button class="btn btn-primary" onclick="saveTreasureMartAudit()" style="flex: 1; font-size: 13px;">💾 Save Changes</button>
+                    <button class="btn btn-secondary" onclick="resetTreasureMartAudit()" style="flex: 1; font-size: 13px;">🔄 Reset</button>
+                    <button class="btn btn-primary" onclick="saveTreasureMartAudit()" style="flex: 1; font-size: 13px;">💾 Save Audit</button>
                 </div>
             </div>
         </div>
@@ -2937,7 +2966,7 @@ CHANGELOG v2.0.2 (2025-12-27):
                         <div class="item-header">
                             <div>
                                 <div class="item-title">${item.productName || 'Unnamed Product'}</div>
-                                <div class="item-sku">SKU: ${item.sku || 'N/A'} | ${item.brandName || 'No Brand'}</div>
+                                <div class="item-sku">SKU: ${item.sku || 'N/A'} | ${item.brandName || 'No Brand'} | OB: $${(parseFloat(item.obShipping) || 0).toFixed(2)}</div>
                             </div>
                             <div class="item-qty">${warehouseQty}</div>
                         </div>
@@ -3065,6 +3094,29 @@ CHANGELOG v2.0.2 (2025-12-27):
                 treasuremarts: parseInt(document.getElementById('editTreasureMarts').value) || 0
             };
             
+            // v2.5.3: Validate allocations don't exceed warehouse qty
+            // Online channels (Etsy, Wix, Wayfair) cannot exceed warehouse qty
+            const maxOnline = newQty; // Warehouse qty is the limit for online channels
+            
+            if (newAllocations.etsy > maxOnline) {
+                showToast(`Etsy (${newAllocations.etsy}) cannot exceed warehouse qty (${maxOnline})`, 'error');
+                return;
+            }
+            if (newAllocations.wix > maxOnline) {
+                showToast(`Wix (${newAllocations.wix}) cannot exceed warehouse qty (${maxOnline})`, 'error');
+                return;
+            }
+            if (newAllocations.wayfair > maxOnline) {
+                showToast(`Wayfair (${newAllocations.wayfair}) cannot exceed warehouse qty (${maxOnline})`, 'error');
+                return;
+            }
+            
+            // Etsy and Wix must match
+            if (newAllocations.etsy !== newAllocations.wix) {
+                showToast(`Etsy (${newAllocations.etsy}) and Wix (${newAllocations.wix}) must match`, 'error');
+                return;
+            }
+            
             // Track what changed for logging
             const changes = {};
             if (currentItem.productName !== newProductName) changes.productName = { old: currentItem.productName, new: newProductName };
@@ -3087,6 +3139,9 @@ CHANGELOG v2.0.2 (2025-12-27):
                 ...currentItem.channels,
                 ...newAllocations
             };
+            
+            // v2.5.3: Run auto-adjustment and PAR checks after edit
+            autoAdjustChannelAllocations(currentItem);
             
             logActivity('ITEM_EDITED', { 
                 itemId: currentItem.id, 
@@ -3194,14 +3249,18 @@ CHANGELOG v2.0.2 (2025-12-27):
             // Also deduct from warehouse qty
             currentItem.qty = Math.max(0, oldWarehouseQty - qtySold);
             
+            // v2.5.3: Auto-adjust channel allocations after sale
+            const adjustments = autoAdjustChannelAllocations(currentItem, channel);
+            
             logActivity('SALE_QTY_UPDATE', {
                 itemId: currentItem.id,
                 sku: currentItem.sku,
                 channel: channel,
                 oldChannelQty: currentChannelQty,
-                newChannelQty: newChannelQty,
+                newChannelQty: currentItem.channels[channel] || 0,
                 oldWarehouseQty: oldWarehouseQty,
-                newWarehouseQty: currentItem.qty
+                newWarehouseQty: currentItem.qty,
+                autoAdjustments: adjustments
             });
             
             const saleRecord = {
@@ -3277,6 +3336,137 @@ CHANGELOG v2.0.2 (2025-12-27):
             if (days < 7) return `${days}d ago`;
             
             return date.toLocaleDateString();
+        }
+        
+        // ============================================================================
+        // CHANNEL ALLOCATION AUTO-ADJUSTMENT (v2.5.3)
+        // Ensures channel allocations stay valid after sales/edits
+        // Rules:
+        // - Etsy = Wix always (they sync together)
+        // - Online channels (Etsy, Wix, Wayfair) cannot exceed Warehouse Qty
+        // - TreasureMarts is physical location, separate from online pool
+        // ============================================================================
+        
+        function autoAdjustChannelAllocations(item, soldChannel = null) {
+            if (!item || !item.channels) {
+                item.channels = {};
+                return { adjusted: false };
+            }
+            
+            const adjustments = {
+                adjusted: false,
+                changes: [],
+                parAlerts: []
+            };
+            
+            const warehouseQty = parseInt(item.qty) || 0;
+            const channels = item.channels;
+            
+            // TreasureMarts is separate (physical location)
+            // Online channels share the warehouse pool
+            const availableForOnline = warehouseQty;
+            
+            // Rule 1: Etsy and Wix always sync together
+            // If one was just sold from, use that value; otherwise use the lower
+            let etsyQty = parseInt(channels.etsy) || 0;
+            let wixQty = parseInt(channels.wix) || 0;
+            
+            if (soldChannel === 'etsy') {
+                // Etsy was sold, sync Wix to match
+                if (wixQty !== etsyQty) {
+                    adjustments.changes.push({ channel: 'wix', from: wixQty, to: etsyQty, reason: 'sync with etsy' });
+                    channels.wix = etsyQty;
+                    wixQty = etsyQty;
+                    adjustments.adjusted = true;
+                }
+            } else if (soldChannel === 'wix') {
+                // Wix was sold, sync Etsy to match
+                if (etsyQty !== wixQty) {
+                    adjustments.changes.push({ channel: 'etsy', from: etsyQty, to: wixQty, reason: 'sync with wix' });
+                    channels.etsy = wixQty;
+                    etsyQty = wixQty;
+                    adjustments.adjusted = true;
+                }
+            } else {
+                // No specific channel sold, ensure they match (use lower value)
+                const syncedQty = Math.min(etsyQty, wixQty);
+                if (etsyQty !== syncedQty) {
+                    adjustments.changes.push({ channel: 'etsy', from: etsyQty, to: syncedQty, reason: 'sync etsy=wix' });
+                    channels.etsy = syncedQty;
+                    adjustments.adjusted = true;
+                }
+                if (wixQty !== syncedQty) {
+                    adjustments.changes.push({ channel: 'wix', from: wixQty, to: syncedQty, reason: 'sync etsy=wix' });
+                    channels.wix = syncedQty;
+                    adjustments.adjusted = true;
+                }
+                etsyQty = wixQty = syncedQty;
+            }
+            
+            // Rule 2: Cap Etsy/Wix at available online
+            const etsyWixQty = parseInt(channels.etsy) || 0;
+            if (etsyWixQty > availableForOnline) {
+                adjustments.changes.push({ channel: 'etsy', from: etsyWixQty, to: availableForOnline, reason: 'exceeds warehouse' });
+                adjustments.changes.push({ channel: 'wix', from: etsyWixQty, to: availableForOnline, reason: 'exceeds warehouse' });
+                channels.etsy = availableForOnline;
+                channels.wix = availableForOnline;
+                adjustments.adjusted = true;
+            }
+            
+            // Rule 3: Cap Wayfair at available online
+            const wayfairQty = parseInt(channels.wayfair) || 0;
+            if (wayfairQty > availableForOnline) {
+                adjustments.changes.push({ channel: 'wayfair', from: wayfairQty, to: availableForOnline, reason: 'exceeds warehouse' });
+                channels.wayfair = availableForOnline;
+                adjustments.adjusted = true;
+            }
+            
+            // Rule 4: Check Channel PAR (Etsy/Wix)
+            const finalEtsyWix = parseInt(channels.etsy) || 0;
+            if (item.channelParEnabled && item.channelParMin > 0) {
+                if (finalEtsyWix <= item.channelParMin) {
+                    adjustments.parAlerts.push({
+                        type: 'channelPar',
+                        message: `Channel PAR Alert: ${item.sku || 'Item'} - Etsy/Wix at ${finalEtsyWix} (min: ${item.channelParMin})`,
+                        current: finalEtsyWix,
+                        min: item.channelParMin
+                    });
+                    logActivity('CHANNEL_PAR_ALERT', {
+                        sku: item.sku,
+                        productName: item.productName,
+                        currentQty: finalEtsyWix,
+                        minPar: item.channelParMin
+                    });
+                    showToast(`⚠️ Channel PAR: ${item.sku} at ${finalEtsyWix} (min: ${item.channelParMin})`, 'warning');
+                }
+            }
+            
+            // Rule 5: Check Master PAR (Warehouse)
+            if (item.minParLevel > 0 && warehouseQty < item.minParLevel) {
+                adjustments.parAlerts.push({
+                    type: 'masterPar',
+                    message: `Reorder Alert: ${item.sku || 'Item'} - Warehouse at ${warehouseQty} (min: ${item.minParLevel})`,
+                    current: warehouseQty,
+                    min: item.minParLevel
+                });
+                logActivity('MASTER_PAR_ALERT', {
+                    sku: item.sku,
+                    productName: item.productName,
+                    currentQty: warehouseQty,
+                    minPar: item.minParLevel
+                });
+                showToast(`⚠️ Reorder: ${item.sku} at ${warehouseQty} (min: ${item.minParLevel})`, 'warning');
+            }
+            
+            if (adjustments.adjusted) {
+                logActivity('CHANNEL_AUTO_ADJUSTED', {
+                    itemId: item.id,
+                    sku: item.sku,
+                    changes: adjustments.changes
+                });
+            }
+            
+            return adjustments;
         }
 
         // ============================================================================
@@ -3376,8 +3566,10 @@ CHANGELOG v2.0.2 (2025-12-27):
         // ============================================================================
         
         // Track audit state - persists during session
-        let treasureMartAudit = {};  // { itemId: 'found' | 'missing' }
-        let auditChanges = [];       // Track changes to save
+        // v2.5.4: Enhanced TM Audit System
+        // auditState: { itemId: { status: 'found'|'missing'|'partial'|'removed', foundQty: N, note: '' } }
+        let treasureMartAudit = {};
+        let auditChanges = [];       // Track changes to apply on save
         
         function loadTreasureMartAudit() {
             try {
@@ -3407,19 +3599,21 @@ CHANGELOG v2.0.2 (2025-12-27):
                 return (channels.treasuremarts || 0) > 0;
             });
             
-            // Sort by shelf number, then product name
+            // Sort by brand name, then product name
             tmItems.sort((a, b) => {
-                const shelfA = a.shelfNumber || 'ZZZ';
-                const shelfB = b.shelfNumber || 'ZZZ';
-                if (shelfA !== shelfB) return shelfA.localeCompare(shelfB);
+                const brandA = a.brandName || 'ZZZ';
+                const brandB = b.brandName || 'ZZZ';
+                if (brandA !== brandB) return brandA.localeCompare(brandB);
                 return (a.productName || '').localeCompare(b.productName || '');
             });
             
             // Calculate totals
-            let totalItems = 0;
+            let totalExpected = 0;
             let totalValue = 0;
-            let checkedCount = 0;
+            let foundCount = 0;
+            let partialCount = 0;
             let missingCount = 0;
+            let removedCount = 0;
             
             const listDiv = document.getElementById('treasureMartList');
             
@@ -3434,44 +3628,98 @@ CHANGELOG v2.0.2 (2025-12-27):
             } else {
                 listDiv.innerHTML = tmItems.map(item => {
                     const channels = item.channels || {};
-                    const qty = channels.treasuremarts || 0;
+                    const expectedQty = channels.treasuremarts || 0;
                     const price = calculateChannelPrice(item, 'treasuremarts');
-                    const lineTotal = qty * price;
+                    const profitMargin = calculateTMNetProfitMargin(item, price);
+                    const lineTotal = expectedQty * price;
                     
-                    totalItems += qty;
+                    totalExpected += expectedQty;
                     totalValue += lineTotal;
                     
-                    const auditStatus = treasureMartAudit[item.id] || 'unchecked';
-                    if (auditStatus === 'found') checkedCount += qty;
-                    if (auditStatus === 'missing') missingCount += qty;
+                    // Get or initialize audit state for this item
+                    const auditState = treasureMartAudit[item.id] || { status: 'unchecked', foundQty: expectedQty, note: '' };
+                    const status = auditState.status;
+                    const foundQty = auditState.foundQty !== undefined ? auditState.foundQty : expectedQty;
+                    const note = auditState.note || '';
                     
-                    const isMissing = auditStatus === 'missing';
-                    const isFound = auditStatus === 'found';
+                    // Count by status
+                    if (status === 'found') foundCount += expectedQty;
+                    else if (status === 'partial') { foundCount += foundQty; partialCount += (expectedQty - foundQty); }
+                    else if (status === 'missing') missingCount += expectedQty;
+                    else if (status === 'removed') removedCount += expectedQty;
                     
-                    const bgColor = isMissing ? '#FEF2F2' : (isFound ? '#F0FDF4' : 'white');
-                    const borderColor = isMissing ? '#FECACA' : (isFound ? '#A7F3D0' : '#E5E7EB');
+                    // Determine colors
+                    const colors = {
+                        unchecked: { bg: 'white', border: '#E5E7EB', text: '#374151' },
+                        found: { bg: '#F0FDF4', border: '#A7F3D0', text: '#047857' },
+                        partial: { bg: '#FFFBEB', border: '#FCD34D', text: '#B45309' },
+                        missing: { bg: '#FEF2F2', border: '#FECACA', text: '#DC2626' },
+                        removed: { bg: '#EFF6FF', border: '#93C5FD', text: '#1D4ED8' }
+                    };
+                    const c = colors[status] || colors.unchecked;
                     
                     return `
-                        <div id="tm-item-${item.id}" style="background: ${bgColor}; border: 2px solid ${borderColor}; border-radius: 8px; padding: 10px; margin-bottom: 8px; ${isMissing ? 'opacity: 0.9;' : ''}">
+                        <div id="tm-item-${item.id}" style="background: ${c.bg}; border: 2px solid ${c.border}; border-radius: 8px; padding: 10px; margin-bottom: 8px;">
+                            <!-- Status Badge -->
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                                <span style="font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 4px; background: ${c.border}; color: ${c.text};">
+                                    ${status === 'unchecked' ? '○ Not Checked' : status === 'found' ? '✓ Found' : status === 'partial' ? '◐ Partial' : status === 'missing' ? '✗ Missing' : '↩ Removed'}
+                                </span>
+                                <span style="font-size: 12px; color: #059669; font-weight: 600;">${profitMargin.toFixed(1)}% margin</span>
+                            </div>
+                            
+                            <!-- Item Info -->
                             <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 8px;">
                                 <div style="flex: 1;">
-                                    <div style="font-weight: 600; font-size: 14px; ${isMissing ? 'color: #DC2626; text-decoration: line-through;' : ''}">${item.productName || 'Unnamed'}</div>
-                                    <div style="font-size: 12px; color: #6B7280;">SKU: ${item.sku || 'N/A'} | Shelf: ${item.shelfNumber || 'N/A'}</div>
+                                    <div style="font-size: 11px; color: #6B7280; font-weight: 500;">${item.brandName || 'No Brand'}</div>
+                                    <div style="font-weight: 600; font-size: 14px; ${status === 'missing' ? 'text-decoration: line-through; color: #DC2626;' : ''}">${item.productName || 'Unnamed'}</div>
+                                    <div style="font-size: 11px; color: #6B7280;">SKU: ${item.sku || 'N/A'}</div>
                                 </div>
                                 <div style="text-align: right;">
-                                    <div style="font-weight: 700; color: ${isMissing ? '#DC2626' : '#047857'}; font-size: 16px;">×${qty}</div>
-                                    <div style="font-size: 12px; color: #6B7280;">$${price.toFixed(2)}</div>
+                                    <div style="font-weight: 700; font-size: 16px; color: ${c.text};">$${price.toFixed(2)}</div>
+                                    <div style="font-size: 12px; color: #6B7280;">×${expectedQty} = $${lineTotal.toFixed(2)}</div>
                                 </div>
                             </div>
-                            <div style="display: flex; gap: 8px;">
-                                <button onclick="markTMItemFound('${item.id}')" 
-                                    style="flex: 1; padding: 8px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; border: 2px solid ${isFound ? '#10B981' : '#D1D5DB'}; background: ${isFound ? '#10B981' : 'white'}; color: ${isFound ? 'white' : '#374151'};">
+                            
+                            <!-- Qty Stepper (for partial) -->
+                            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px; padding: 8px; background: #F9FAFB; border-radius: 6px;">
+                                <span style="font-size: 12px; color: #374151; flex: 1;">Found:</span>
+                                <button onclick="adjustTMQty('${item.id}', -1)" style="width: 32px; height: 32px; border-radius: 6px; border: 1px solid #D1D5DB; background: white; font-size: 18px; cursor: pointer;">−</button>
+                                <span style="font-size: 18px; font-weight: 700; min-width: 40px; text-align: center;" id="tm-found-${item.id}">${foundQty}</span>
+                                <button onclick="adjustTMQty('${item.id}', 1)" style="width: 32px; height: 32px; border-radius: 6px; border: 1px solid #D1D5DB; background: white; font-size: 18px; cursor: pointer;">+</button>
+                                <span style="font-size: 12px; color: #6B7280;">/ ${expectedQty}</span>
+                            </div>
+                            
+                            <!-- Status Buttons -->
+                            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-bottom: 8px;">
+                                <button onclick="setTMStatus('${item.id}', 'found')" 
+                                    style="padding: 6px 4px; border-radius: 4px; font-size: 11px; font-weight: 600; cursor: pointer; border: 2px solid ${status === 'found' ? '#10B981' : '#D1D5DB'}; background: ${status === 'found' ? '#10B981' : 'white'}; color: ${status === 'found' ? 'white' : '#374151'};">
                                     ✓ Found
                                 </button>
-                                <button onclick="markTMItemMissing('${item.id}')" 
-                                    style="flex: 1; padding: 8px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; border: 2px solid ${isMissing ? '#DC2626' : '#D1D5DB'}; background: ${isMissing ? '#DC2626' : 'white'}; color: ${isMissing ? 'white' : '#374151'};">
+                                <button onclick="setTMStatus('${item.id}', 'partial')" 
+                                    style="padding: 6px 4px; border-radius: 4px; font-size: 11px; font-weight: 600; cursor: pointer; border: 2px solid ${status === 'partial' ? '#F59E0B' : '#D1D5DB'}; background: ${status === 'partial' ? '#F59E0B' : 'white'}; color: ${status === 'partial' ? 'white' : '#374151'};">
+                                    ◐ Partial
+                                </button>
+                                <button onclick="setTMStatus('${item.id}', 'missing')" 
+                                    style="padding: 6px 4px; border-radius: 4px; font-size: 11px; font-weight: 600; cursor: pointer; border: 2px solid ${status === 'missing' ? '#DC2626' : '#D1D5DB'}; background: ${status === 'missing' ? '#DC2626' : 'white'}; color: ${status === 'missing' ? 'white' : '#374151'};">
                                     ✗ Missing
                                 </button>
+                                <button onclick="setTMStatus('${item.id}', 'removed')" 
+                                    style="padding: 6px 4px; border-radius: 4px; font-size: 11px; font-weight: 600; cursor: pointer; border: 2px solid ${status === 'removed' ? '#3B82F6' : '#D1D5DB'}; background: ${status === 'removed' ? '#3B82F6' : 'white'}; color: ${status === 'removed' ? 'white' : '#374151'};">
+                                    ↩ Removed
+                                </button>
+                            </div>
+                            
+                            <!-- Notes Section -->
+                            <div style="margin-top: 6px;">
+                                <div style="display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 4px;">
+                                    <button onclick="addTMQuickNote('${item.id}', 'Damaged')" style="font-size: 10px; padding: 3px 6px; border-radius: 4px; border: 1px solid #D1D5DB; background: ${note.includes('Damaged') ? '#FEE2E2' : 'white'}; cursor: pointer;">Damaged</button>
+                                    <button onclick="addTMQuickNote('${item.id}', 'Wrong Price')" style="font-size: 10px; padding: 3px 6px; border-radius: 4px; border: 1px solid #D1D5DB; background: ${note.includes('Wrong Price') ? '#FEF3C7' : 'white'}; cursor: pointer;">Wrong Price</button>
+                                    <button onclick="addTMQuickNote('${item.id}', 'Sold')" style="font-size: 10px; padding: 3px 6px; border-radius: 4px; border: 1px solid #D1D5DB; background: ${note.includes('Sold') ? '#DBEAFE' : 'white'}; cursor: pointer;">Sold</button>
+                                </div>
+                                <input type="text" id="tm-note-${item.id}" value="${note}" placeholder="Add note..." 
+                                    onchange="updateTMNote('${item.id}')"
+                                    style="width: 100%; padding: 6px 8px; font-size: 12px; border: 1px solid #D1D5DB; border-radius: 4px; box-sizing: border-box;">
                             </div>
                         </div>
                     `;
@@ -3479,48 +3727,133 @@ CHANGELOG v2.0.2 (2025-12-27):
             }
             
             // Update totals
-            document.getElementById('tmTotalItems').textContent = totalItems;
-            document.getElementById('tmCheckedCount').textContent = checkedCount;
+            document.getElementById('tmTotalItems').textContent = totalExpected;
+            document.getElementById('tmCheckedCount').textContent = foundCount;
+            document.getElementById('tmPartialCount').textContent = partialCount;
             document.getElementById('tmMissingCount').textContent = missingCount;
+            document.getElementById('tmRemovedCount').textContent = removedCount;
             document.getElementById('tmTotalValue').textContent = '$' + totalValue.toFixed(2);
             
             closeSettings();
             document.getElementById('treasureMartModal').classList.add('active');
             
-            logActivity('TREASUREMART_REPORT_VIEWED', { itemCount: tmItems.length, totalQty: totalItems, totalValue: totalValue.toFixed(2) });
+            logActivity('TREASUREMART_AUDIT_VIEWED', { itemCount: tmItems.length, totalQty: totalExpected, totalValue: totalValue.toFixed(2) });
         }
         
-        function markTMItemFound(itemId) {
-            treasureMartAudit[itemId] = 'found';
-            saveTreasureMartAuditState();
+        // Calculate net profit margin for TM
+        function calculateTMNetProfitMargin(item, tmPrice) {
+            const wholesale = parseFloat(item.wholesalePrice) || 0;
+            const ibPercent = parseFloat(item.ibShipping) || 0;
+            const ib = wholesale * (ibPercent / 100);
+            const tariff = parseFloat(item.tariff) || 0;
+            const commission = (wholesale * 2) * 0.10; // 10% commission on base price
             
-            // Refresh the display
-            showTreasureMartReport();
+            const totalCost = wholesale + ib + tariff + commission;
+            
+            if (tmPrice <= 0) return 0;
+            return ((tmPrice - totalCost) / tmPrice) * 100;
         }
         
-        function markTMItemMissing(itemId) {
+        // Adjust found quantity
+        function adjustTMQty(itemId, delta) {
             const item = inventory.find(i => String(i.id) === String(itemId));
             if (!item) return;
             
-            // Confirm before marking missing
-            if (!confirm(`Mark "${item.productName}" as MISSING?\n\nThis will deduct 1 from TreasureMart inventory when you save.`)) {
-                return;
+            const expectedQty = item.channels?.treasuremarts || 0;
+            
+            // Get or initialize audit state
+            if (!treasureMartAudit[itemId]) {
+                treasureMartAudit[itemId] = { status: 'unchecked', foundQty: expectedQty, note: '' };
             }
             
-            treasureMartAudit[itemId] = 'missing';
+            const currentFound = treasureMartAudit[itemId].foundQty;
+            const newFound = Math.max(0, Math.min(expectedQty, currentFound + delta));
             
-            // Track the change to apply on save
-            if (!auditChanges.find(c => c.itemId === itemId)) {
-                auditChanges.push({
-                    itemId: itemId,
-                    action: 'missing',
-                    sku: item.sku,
-                    productName: item.productName
-                });
+            treasureMartAudit[itemId].foundQty = newFound;
+            
+            // Auto-set status based on qty
+            if (newFound === expectedQty) {
+                treasureMartAudit[itemId].status = 'found';
+            } else if (newFound === 0) {
+                treasureMartAudit[itemId].status = 'missing';
+            } else {
+                treasureMartAudit[itemId].status = 'partial';
             }
             
             saveTreasureMartAuditState();
             showTreasureMartReport();
+        }
+        
+        // Set status directly
+        function setTMStatus(itemId, status) {
+            const item = inventory.find(i => String(i.id) === String(itemId));
+            if (!item) return;
+            
+            const expectedQty = item.channels?.treasuremarts || 0;
+            
+            // Handle "removed" status with confirmation
+            if (status === 'removed') {
+                if (!confirm(`Move ${expectedQty} unit(s) of "${item.productName}" from TreasureMarts back to Warehouse inventory?`)) {
+                    return; // User said no - keep current status (Option C)
+                }
+            }
+            
+            // Get or initialize audit state
+            if (!treasureMartAudit[itemId]) {
+                treasureMartAudit[itemId] = { status: 'unchecked', foundQty: expectedQty, note: '' };
+            }
+            
+            treasureMartAudit[itemId].status = status;
+            
+            // Set foundQty based on status
+            if (status === 'found') {
+                treasureMartAudit[itemId].foundQty = expectedQty;
+            } else if (status === 'missing') {
+                treasureMartAudit[itemId].foundQty = 0;
+            } else if (status === 'removed') {
+                treasureMartAudit[itemId].foundQty = 0;
+            }
+            // 'partial' keeps current foundQty
+            
+            saveTreasureMartAuditState();
+            showTreasureMartReport();
+        }
+        
+        // Add quick note
+        function addTMQuickNote(itemId, quickNote) {
+            if (!treasureMartAudit[itemId]) {
+                const item = inventory.find(i => String(i.id) === String(itemId));
+                const expectedQty = item?.channels?.treasuremarts || 0;
+                treasureMartAudit[itemId] = { status: 'unchecked', foundQty: expectedQty, note: '' };
+            }
+            
+            let currentNote = treasureMartAudit[itemId].note || '';
+            
+            // Toggle the quick note
+            if (currentNote.includes(quickNote)) {
+                currentNote = currentNote.replace(quickNote, '').replace(/,\s*,/g, ',').replace(/^,\s*|,\s*$/g, '').trim();
+            } else {
+                currentNote = currentNote ? currentNote + ', ' + quickNote : quickNote;
+            }
+            
+            treasureMartAudit[itemId].note = currentNote;
+            saveTreasureMartAuditState();
+            showTreasureMartReport();
+        }
+        
+        // Update note from text input
+        function updateTMNote(itemId) {
+            const noteInput = document.getElementById(`tm-note-${itemId}`);
+            if (!noteInput) return;
+            
+            if (!treasureMartAudit[itemId]) {
+                const item = inventory.find(i => String(i.id) === String(itemId));
+                const expectedQty = item?.channels?.treasuremarts || 0;
+                treasureMartAudit[itemId] = { status: 'unchecked', foundQty: expectedQty, note: '' };
+            }
+            
+            treasureMartAudit[itemId].note = noteInput.value;
+            saveTreasureMartAuditState();
         }
         
         function resetTreasureMartAudit() {
@@ -3537,34 +3870,114 @@ CHANGELOG v2.0.2 (2025-12-27):
         }
         
         async function saveTreasureMartAudit() {
-            if (auditChanges.length === 0) {
-                showToast('No missing items to save', 'warning');
+            // Build list of changes to apply
+            const changes = [];
+            let totalMissing = 0;
+            let totalPartialMissing = 0;
+            let totalRemoved = 0;
+            
+            for (const [itemId, auditState] of Object.entries(treasureMartAudit)) {
+                if (typeof auditState !== 'object') continue; // Skip old format
+                
+                const item = inventory.find(i => String(i.id) === String(itemId));
+                if (!item) continue;
+                
+                const expectedQty = item.channels?.treasuremarts || 0;
+                const foundQty = auditState.foundQty || 0;
+                const status = auditState.status;
+                
+                if (status === 'missing') {
+                    // All missing - deduct entire qty from both TM and warehouse
+                    changes.push({
+                        itemId: itemId,
+                        action: 'missing',
+                        deductTM: expectedQty,
+                        deductWarehouse: expectedQty,
+                        item: item
+                    });
+                    totalMissing += expectedQty;
+                } else if (status === 'partial') {
+                    // Partial - deduct the difference
+                    const missingQty = expectedQty - foundQty;
+                    if (missingQty > 0) {
+                        changes.push({
+                            itemId: itemId,
+                            action: 'partial',
+                            deductTM: missingQty,
+                            deductWarehouse: missingQty,
+                            foundQty: foundQty,
+                            expectedQty: expectedQty,
+                            item: item
+                        });
+                        totalPartialMissing += missingQty;
+                    }
+                } else if (status === 'removed') {
+                    // Removed - move from TM back to warehouse (TM qty goes to 0, warehouse increases)
+                    changes.push({
+                        itemId: itemId,
+                        action: 'removed',
+                        moveQty: expectedQty,
+                        item: item
+                    });
+                    totalRemoved += expectedQty;
+                }
+                // 'found' = no changes needed
+            }
+            
+            if (changes.length === 0) {
+                showToast('No changes to save (all items found)', 'success');
                 return;
             }
             
-            const missingItems = auditChanges.filter(c => c.action === 'missing');
+            // Build confirmation message
+            let confirmMsg = 'Save audit results?\n\n';
+            if (totalMissing > 0) confirmMsg += `• ${totalMissing} unit(s) MISSING - will be deducted\n`;
+            if (totalPartialMissing > 0) confirmMsg += `• ${totalPartialMissing} unit(s) PARTIAL missing - will be deducted\n`;
+            if (totalRemoved > 0) confirmMsg += `• ${totalRemoved} unit(s) REMOVED - will move back to warehouse\n`;
             
-            if (!confirm(`Save audit results?\n\nThis will deduct inventory for ${missingItems.length} missing item(s).`)) {
+            if (!confirm(confirmMsg)) {
                 return;
             }
             
-            // Apply the changes to inventory
-            for (const change of missingItems) {
-                const item = inventory.find(i => String(i.id) === String(change.itemId));
-                if (item && item.channels) {
-                    const currentQty = item.channels.treasuremarts || 0;
-                    item.channels.treasuremarts = Math.max(0, currentQty - 1);
+            // Apply the changes
+            for (const change of changes) {
+                const item = change.item;
+                
+                if (change.action === 'missing' || change.action === 'partial') {
+                    // Deduct from TM allocation
+                    const currentTM = item.channels?.treasuremarts || 0;
+                    item.channels.treasuremarts = Math.max(0, currentTM - change.deductTM);
                     
-                    // Also deduct from warehouse qty
-                    const warehouseQty = parseInt(item.qty) || 0;
-                    item.qty = Math.max(0, warehouseQty - 1);
+                    // Deduct from warehouse qty (item is lost)
+                    const currentWarehouse = parseInt(item.qty) || 0;
+                    item.qty = Math.max(0, currentWarehouse - change.deductWarehouse);
                     
-                    logActivity('TM_ITEM_MARKED_MISSING', {
+                    logActivity('TM_AUDIT_DEDUCT', {
                         itemId: item.id,
                         sku: item.sku,
                         productName: item.productName,
-                        previousQty: currentQty,
-                        newQty: item.channels.treasuremarts
+                        action: change.action,
+                        deductedQty: change.deductTM,
+                        previousTM: currentTM,
+                        newTM: item.channels.treasuremarts,
+                        note: treasureMartAudit[change.itemId]?.note || ''
+                    });
+                    
+                } else if (change.action === 'removed') {
+                    // Move from TM back to warehouse
+                    const currentTM = item.channels?.treasuremarts || 0;
+                    item.channels.treasuremarts = 0;
+                    
+                    // Warehouse qty stays the same (item was already counted in qty)
+                    // But we need to make sure the item is available for online channels
+                    // Note: qty already includes TM allocation, so no change needed
+                    
+                    logActivity('TM_AUDIT_REMOVED', {
+                        itemId: item.id,
+                        sku: item.sku,
+                        productName: item.productName,
+                        movedQty: change.moveQty,
+                        note: treasureMartAudit[change.itemId]?.note || ''
                     });
                 }
             }
@@ -3573,18 +3986,21 @@ CHANGELOG v2.0.2 (2025-12-27):
             if (isConnected) {
                 const saved = await saveInventoryToOneDrive();
                 if (saved) {
-                    // v2.5.2: Also save the audit report for desktop access
+                    // Save the audit report
                     await saveAuditReportToOneDrive();
                     
-                    // Clear the audit changes (keep the checkmarks for reference)
-                    auditChanges = [];
-                    showToast(`Saved! ${missingItems.length} item(s) deducted from inventory`, 'success');
+                    // Clear the audit state
+                    treasureMartAudit = {};
+                    localStorage.removeItem('ccd_tm_audit');
+                    
+                    showToast(`Audit saved! ${changes.length} item(s) updated`, 'success');
                 } else {
                     showToast('Failed to save to OneDrive', 'error');
                 }
             } else {
                 saveToStorage();
-                auditChanges = [];
+                treasureMartAudit = {};
+                localStorage.removeItem('ccd_tm_audit');
                 showToast('Saved locally (not connected to OneDrive)', 'warning');
             }
             
@@ -3605,7 +4021,7 @@ CHANGELOG v2.0.2 (2025-12-27):
         }
         
         // ============================================================================
-        // AUDIT REPORT SAVE TO ONEDRIVE (v2.5.2)
+        // AUDIT REPORT SAVE TO ONEDRIVE (v2.5.4)
         // Saves a permanent record of the audit for desktop access
         // ============================================================================
         
@@ -3620,56 +4036,86 @@ CHANGELOG v2.0.2 (2025-12-27):
                 const auditDate = new Date().toISOString();
                 const dateStr = auditDate.split('T')[0]; // YYYY-MM-DD
                 
-                const foundItems = [];
-                const missingItems = [];
+                const auditItems = [];
+                let totalExpected = 0;
+                let totalFound = 0;
+                let totalMissing = 0;
+                let totalPartial = 0;
+                let totalRemoved = 0;
                 let foundValue = 0;
                 let missingValue = 0;
                 
-                for (const [itemId, status] of Object.entries(treasureMartAudit)) {
-                    const item = inventory.find(i => String(i.id) === String(itemId));
-                    if (item) {
-                        const price = calculateChannelPrice(item, 'treasuremarts');
-                        const qty = item.channels?.treasuremarts || 0;
-                        
-                        const itemData = {
-                            id: item.id,
-                            sku: item.sku || 'N/A',
-                            productName: item.productName || 'Unknown',
-                            brandName: item.brandName || 'Unknown',
-                            shelfNumber: item.shelfNumber || 'N/A',
-                            qty: qty,
-                            price: price,
-                            lineTotal: qty * price
-                        };
-                        
-                        if (status === 'found') {
-                            foundItems.push(itemData);
-                            foundValue += itemData.lineTotal;
-                        } else if (status === 'missing') {
-                            missingItems.push(itemData);
-                            missingValue += price; // Missing is 1 item
-                        }
+                // Get all TM items for context
+                const tmItems = inventory.filter(item => {
+                    const channels = item.channels || {};
+                    return (channels.treasuremarts || 0) > 0 || treasureMartAudit[item.id];
+                });
+                
+                for (const item of tmItems) {
+                    const auditState = treasureMartAudit[item.id];
+                    if (!auditState || typeof auditState !== 'object') continue;
+                    
+                    const price = calculateChannelPrice(item, 'treasuremarts');
+                    const profitMargin = calculateTMNetProfitMargin(item, price);
+                    const expectedQty = item.channels?.treasuremarts || 0;
+                    const foundQty = auditState.foundQty || 0;
+                    const status = auditState.status || 'unchecked';
+                    const note = auditState.note || '';
+                    
+                    totalExpected += expectedQty;
+                    
+                    const itemData = {
+                        id: item.id,
+                        sku: item.sku || 'N/A',
+                        productName: item.productName || 'Unknown',
+                        brandName: item.brandName || 'Unknown',
+                        status: status,
+                        expectedQty: expectedQty,
+                        foundQty: foundQty,
+                        missingQty: status === 'missing' ? expectedQty : (status === 'partial' ? expectedQty - foundQty : 0),
+                        tmPrice: price,
+                        netProfitMargin: profitMargin,
+                        lineTotal: expectedQty * price,
+                        note: note
+                    };
+                    
+                    auditItems.push(itemData);
+                    
+                    if (status === 'found') {
+                        totalFound += expectedQty;
+                        foundValue += itemData.lineTotal;
+                    } else if (status === 'partial') {
+                        totalFound += foundQty;
+                        totalPartial += (expectedQty - foundQty);
+                        foundValue += foundQty * price;
+                        missingValue += (expectedQty - foundQty) * price;
+                    } else if (status === 'missing') {
+                        totalMissing += expectedQty;
+                        missingValue += itemData.lineTotal;
+                    } else if (status === 'removed') {
+                        totalRemoved += expectedQty;
                     }
                 }
                 
-                // Build audit report
+                // Build audit report (v2.0 format)
                 const auditReport = {
                     _reportType: 'TreasureMartAudit',
-                    _version: '1.0',
+                    _version: '2.0',
                     auditDate: auditDate,
                     auditDateFormatted: new Date().toLocaleDateString('en-US', { 
                         weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' 
                     }),
                     summary: {
-                        totalItemsAudited: foundItems.length + missingItems.length,
-                        foundCount: foundItems.length,
-                        missingCount: missingItems.length,
+                        totalExpected: totalExpected,
+                        totalFound: totalFound,
+                        totalMissing: totalMissing,
+                        totalPartial: totalPartial,
+                        totalRemoved: totalRemoved,
                         foundValue: foundValue,
                         missingValue: missingValue,
-                        totalValueAfterAudit: foundValue
+                        totalValueAtRisk: missingValue
                     },
-                    foundItems: foundItems,
-                    missingItems: missingItems
+                    items: auditItems
                 };
                 
                 // Save to OneDrive in Reports folder
@@ -3689,8 +4135,11 @@ CHANGELOG v2.0.2 (2025-12-27):
                 if (response.ok) {
                     logActivity('AUDIT_REPORT_SAVED', {
                         path: reportPath,
-                        foundCount: foundItems.length,
-                        missingCount: missingItems.length,
+                        totalExpected: totalExpected,
+                        totalFound: totalFound,
+                        totalMissing: totalMissing,
+                        totalPartial: totalPartial,
+                        totalRemoved: totalRemoved,
                         missingValue: missingValue.toFixed(2)
                     });
                     return true;
@@ -3709,65 +4158,92 @@ CHANGELOG v2.0.2 (2025-12-27):
         }
         
         // ============================================================================
-        // MISSING ITEMS REPORT
+        // ISSUES REPORT (Missing, Partial, Removed)
         // ============================================================================
         
         function showMissingItemsReport() {
-            const missingItems = [];
-            let totalMissing = 0;
+            const issueItems = [];
+            let totalIssues = 0;
             let totalValue = 0;
             
-            for (const [itemId, status] of Object.entries(treasureMartAudit)) {
-                if (status === 'missing') {
+            for (const [itemId, auditState] of Object.entries(treasureMartAudit)) {
+                if (typeof auditState !== 'object') continue;
+                
+                const status = auditState.status;
+                if (status === 'missing' || status === 'partial' || status === 'removed') {
                     const item = inventory.find(i => String(i.id) === String(itemId));
                     if (item) {
                         const price = calculateChannelPrice(item, 'treasuremarts');
-                        missingItems.push({
+                        const expectedQty = item.channels?.treasuremarts || 0;
+                        const foundQty = auditState.foundQty || 0;
+                        const missingQty = status === 'missing' ? expectedQty : (status === 'partial' ? expectedQty - foundQty : expectedQty);
+                        
+                        issueItems.push({
                             ...item,
-                            tmPrice: price
+                            status: status,
+                            expectedQty: expectedQty,
+                            foundQty: foundQty,
+                            missingQty: missingQty,
+                            tmPrice: price,
+                            note: auditState.note || ''
                         });
-                        totalMissing += 1;
-                        totalValue += price;
+                        totalIssues += missingQty;
+                        totalValue += missingQty * price;
                     }
                 }
             }
             
-            // Sort by shelf, then name
-            missingItems.sort((a, b) => {
-                const shelfA = a.shelfNumber || 'ZZZ';
-                const shelfB = b.shelfNumber || 'ZZZ';
-                if (shelfA !== shelfB) return shelfA.localeCompare(shelfB);
+            // Sort by brand, then name
+            issueItems.sort((a, b) => {
+                const brandA = a.brandName || 'ZZZ';
+                const brandB = b.brandName || 'ZZZ';
+                if (brandA !== brandB) return brandA.localeCompare(brandB);
                 return (a.productName || '').localeCompare(b.productName || '');
             });
             
             const listDiv = document.getElementById('missingItemsList');
             
-            if (missingItems.length === 0) {
+            if (issueItems.length === 0) {
                 listDiv.innerHTML = `
                     <div style="text-align: center; padding: 40px 20px; color: #6B7280;">
                         <div style="font-size: 48px; margin-bottom: 10px;">✅</div>
-                        <div style="font-size: 16px; font-weight: 600;">No Missing Items</div>
-                        <div style="font-size: 14px; margin-top: 5px;">All items have been found or not yet checked.</div>
+                        <div style="font-size: 16px; font-weight: 600;">No Issues Found</div>
+                        <div style="font-size: 14px; margin-top: 5px;">All items found or not yet checked.</div>
                     </div>
                 `;
             } else {
-                listDiv.innerHTML = missingItems.map(item => `
-                    <div style="background: #FEF2F2; border: 2px solid #FECACA; border-radius: 8px; padding: 12px; margin-bottom: 8px;">
-                        <div style="display: flex; justify-content: space-between; align-items: start;">
-                            <div style="flex: 1;">
-                                <div style="font-weight: 600; font-size: 14px; color: #DC2626;">${item.productName || 'Unnamed'}</div>
-                                <div style="font-size: 12px; color: #6B7280;">SKU: ${item.sku || 'N/A'}</div>
-                                <div style="font-size: 12px; color: #6B7280;">Shelf: ${item.shelfNumber || 'N/A'}</div>
+                const statusColors = {
+                    missing: { bg: '#FEF2F2', border: '#FECACA', text: '#DC2626', label: '✗ Missing' },
+                    partial: { bg: '#FFFBEB', border: '#FCD34D', text: '#B45309', label: '◐ Partial' },
+                    removed: { bg: '#EFF6FF', border: '#93C5FD', text: '#1D4ED8', label: '↩ Removed' }
+                };
+                
+                listDiv.innerHTML = issueItems.map(item => {
+                    const c = statusColors[item.status] || statusColors.missing;
+                    return `
+                        <div style="background: ${c.bg}; border: 2px solid ${c.border}; border-radius: 8px; padding: 12px; margin-bottom: 8px;">
+                            <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 4px;">
+                                <span style="font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 4px; background: ${c.border}; color: ${c.text};">${c.label}</span>
+                                <span style="font-size: 12px; color: #6B7280;">${item.status === 'partial' ? `Found ${item.foundQty}/${item.expectedQty}` : `Qty: ${item.expectedQty}`}</span>
                             </div>
-                            <div style="text-align: right;">
-                                <div style="font-weight: 700; color: #DC2626; font-size: 16px;">$${item.tmPrice.toFixed(2)}</div>
+                            <div style="display: flex; justify-content: space-between; align-items: start;">
+                                <div style="flex: 1;">
+                                    <div style="font-size: 11px; color: #6B7280;">${item.brandName || 'No Brand'}</div>
+                                    <div style="font-weight: 600; font-size: 14px; color: ${c.text};">${item.productName || 'Unnamed'}</div>
+                                    <div style="font-size: 12px; color: #6B7280;">SKU: ${item.sku || 'N/A'}</div>
+                                    ${item.note ? `<div style="font-size: 11px; color: #9CA3AF; font-style: italic; margin-top: 4px;">📝 ${item.note}</div>` : ''}
+                                </div>
+                                <div style="text-align: right;">
+                                    <div style="font-weight: 700; color: ${c.text}; font-size: 16px;">$${(item.missingQty * item.tmPrice).toFixed(2)}</div>
+                                    <div style="font-size: 11px; color: #6B7280;">${item.missingQty} × $${item.tmPrice.toFixed(2)}</div>
+                                </div>
                             </div>
                         </div>
-                    </div>
-                `).join('');
+                    `;
+                }).join('');
             }
             
-            document.getElementById('missingTotalCount').textContent = totalMissing;
+            document.getElementById('missingTotalCount').textContent = totalIssues;
             document.getElementById('missingTotalValue').textContent = '$' + totalValue.toFixed(2);
             
             document.getElementById('missingItemsModal').classList.add('active');
@@ -3784,50 +4260,69 @@ CHANGELOG v2.0.2 (2025-12-27):
         }
         
         function copyMissingItemsReport() {
-            const missingItems = [];
+            const issueItems = [];
             let totalValue = 0;
             
-            for (const [itemId, status] of Object.entries(treasureMartAudit)) {
-                if (status === 'missing') {
+            for (const [itemId, auditState] of Object.entries(treasureMartAudit)) {
+                if (typeof auditState !== 'object') continue;
+                
+                const status = auditState.status;
+                if (status === 'missing' || status === 'partial' || status === 'removed') {
                     const item = inventory.find(i => String(i.id) === String(itemId));
                     if (item) {
                         const price = calculateChannelPrice(item, 'treasuremarts');
-                        missingItems.push({ ...item, tmPrice: price });
-                        totalValue += price;
+                        const expectedQty = item.channels?.treasuremarts || 0;
+                        const foundQty = auditState.foundQty || 0;
+                        const missingQty = status === 'missing' ? expectedQty : (status === 'partial' ? expectedQty - foundQty : expectedQty);
+                        
+                        issueItems.push({ 
+                            ...item, 
+                            status: status,
+                            expectedQty: expectedQty,
+                            foundQty: foundQty,
+                            missingQty: missingQty,
+                            tmPrice: price,
+                            note: auditState.note || ''
+                        });
+                        totalValue += missingQty * price;
                     }
                 }
             }
             
-            missingItems.sort((a, b) => (a.productName || '').localeCompare(b.productName || ''));
+            issueItems.sort((a, b) => (a.productName || '').localeCompare(b.productName || ''));
+            
+            const statusLabels = { missing: 'MISSING', partial: 'PARTIAL', removed: 'REMOVED' };
             
             const lines = [
-                'TREASUREMART MISSING ITEMS REPORT',
+                'TREASUREMART AUDIT ISSUES REPORT',
                 '=' .repeat(40),
                 `Date: ${new Date().toLocaleString()}`,
                 ''
             ];
             
-            missingItems.forEach((item, idx) => {
-                lines.push(`${idx + 1}. ${item.productName || 'Unnamed'}`);
+            issueItems.forEach((item, idx) => {
+                lines.push(`${idx + 1}. [${statusLabels[item.status]}] ${item.productName || 'Unnamed'}`);
+                lines.push(`   Brand: ${item.brandName || 'N/A'}`);
                 lines.push(`   SKU: ${item.sku || 'N/A'}`);
-                lines.push(`   Shelf: ${item.shelfNumber || 'N/A'}`);
-                lines.push(`   Value: $${item.tmPrice.toFixed(2)}`);
+                lines.push(`   Qty: ${item.status === 'partial' ? `Found ${item.foundQty}/${item.expectedQty}` : item.expectedQty}`);
+                lines.push(`   Value Lost: $${(item.missingQty * item.tmPrice).toFixed(2)}`);
+                if (item.note) lines.push(`   Note: ${item.note}`);
                 lines.push('');
             });
             
             lines.push('=' .repeat(40));
-            lines.push(`TOTAL MISSING: ${missingItems.length} items`);
-            lines.push(`TOTAL LOST VALUE: $${totalValue.toFixed(2)}`);
+            lines.push(`TOTAL ISSUES: ${issueItems.length} items`);
+            lines.push(`TOTAL VALUE AT RISK: $${totalValue.toFixed(2)}`);
             
             navigator.clipboard.writeText(lines.join('\n')).then(() => {
-                showToast('Missing items report copied!', 'success');
+                showToast('Issues report copied!', 'success');
             }).catch(() => {
                 showToast('Failed to copy report', 'error');
             });
         }
         
         // ============================================================================
-        // TREASUREMART EXPORT FUNCTIONS
+        // TREASUREMART EXPORT FUNCTIONS (v2.5.4)
         // ============================================================================
         
         function exportTreasureMartPDF() {
@@ -3837,10 +4332,11 @@ CHANGELOG v2.0.2 (2025-12-27):
                 return (channels.treasuremarts || 0) > 0;
             });
             
+            // Sort by brand, then product name
             tmItems.sort((a, b) => {
-                const shelfA = a.shelfNumber || 'ZZZ';
-                const shelfB = b.shelfNumber || 'ZZZ';
-                if (shelfA !== shelfB) return shelfA.localeCompare(shelfB);
+                const brandA = a.brandName || 'ZZZ';
+                const brandB = b.brandName || 'ZZZ';
+                if (brandA !== brandB) return brandA.localeCompare(brandB);
                 return (a.productName || '').localeCompare(b.productName || '');
             });
             
@@ -3851,29 +4347,55 @@ CHANGELOG v2.0.2 (2025-12-27):
                 const channels = item.channels || {};
                 const qty = channels.treasuremarts || 0;
                 const price = calculateChannelPrice(item, 'treasuremarts');
+                const profitMargin = calculateTMNetProfitMargin(item, price);
                 const lineTotal = qty * price;
                 totalItems += qty;
                 totalValue += lineTotal;
                 
-                const status = treasureMartAudit[item.id] || 'unchecked';
-                const statusSymbol = status === 'found' ? '✓' : (status === 'missing' ? '✗' : '○');
-                const rowStyle = status === 'missing' ? 'background: #FEE2E2; color: #DC2626;' : '';
+                // Get audit state
+                const auditState = treasureMartAudit[item.id];
+                let status = 'unchecked';
+                let foundQty = qty;
+                if (auditState && typeof auditState === 'object') {
+                    status = auditState.status || 'unchecked';
+                    foundQty = auditState.foundQty !== undefined ? auditState.foundQty : qty;
+                }
+                
+                const statusSymbols = {
+                    unchecked: '○',
+                    found: '✓',
+                    partial: '◐',
+                    missing: '✗',
+                    removed: '↩'
+                };
+                const statusSymbol = statusSymbols[status] || '○';
+                
+                const rowColors = {
+                    unchecked: '',
+                    found: 'background: #F0FDF4;',
+                    partial: 'background: #FFFBEB;',
+                    missing: 'background: #FEE2E2; color: #DC2626;',
+                    removed: 'background: #EFF6FF; color: #1D4ED8;'
+                };
+                const rowStyle = rowColors[status] || '';
+                
+                const qtyDisplay = status === 'partial' ? `${foundQty}/${qty}` : qty;
                 
                 return '<tr style="' + rowStyle + '">' +
                     '<td style="padding: 6px; border: 1px solid #ddd; text-align: center; font-size: 16px;">' + statusSymbol + '</td>' +
-                    '<td style="padding: 6px; border: 1px solid #ddd;">' + (item.shelfNumber || 'N/A') + '</td>' +
+                    '<td style="padding: 6px; border: 1px solid #ddd;">' + (item.brandName || 'N/A') + '</td>' +
                     '<td style="padding: 6px; border: 1px solid #ddd;">' + (item.productName || 'Unnamed') + '</td>' +
                     '<td style="padding: 6px; border: 1px solid #ddd;">' + (item.sku || 'N/A') + '</td>' +
-                    '<td style="padding: 6px; border: 1px solid #ddd; text-align: center;">' + qty + '</td>' +
+                    '<td style="padding: 6px; border: 1px solid #ddd; text-align: center;">' + qtyDisplay + '</td>' +
                     '<td style="padding: 6px; border: 1px solid #ddd; text-align: right;">$' + price.toFixed(2) + '</td>' +
-                    '<td style="padding: 6px; border: 1px solid #ddd; text-align: right;">$' + lineTotal.toFixed(2) + '</td>' +
+                    '<td style="padding: 6px; border: 1px solid #ddd; text-align: right;">' + profitMargin.toFixed(1) + '%</td>' +
                     '</tr>';
             }).join('');
             
             const html = '<!DOCTYPE html>' +
                 '<html>' +
                 '<head>' +
-                '<title>TreasureMart Inventory Report</title>' +
+                '<title>TreasureMart Inventory Audit Report</title>' +
                 '<meta name="viewport" content="width=device-width, initial-scale=1.0">' +
                 '<style>' +
                 'body { font-family: Arial, sans-serif; padding: 20px; font-size: 11px; }' +
@@ -3896,18 +4418,18 @@ CHANGELOG v2.0.2 (2025-12-27):
                 '<button class="btn btn-back" onclick="window.close()">← Back to App</button>' +
                 '<button class="btn btn-print" onclick="window.print()">🖨️ Print / Save as PDF</button>' +
                 '</div>' +
-                '<h1>🐮 TreasureMart Inventory Report</h1>' +
+                '<h1>🐮 TreasureMart Inventory Audit Report</h1>' +
                 '<div class="date">Generated: ' + new Date().toLocaleString() + '</div>' +
                 '<table>' +
                 '<thead>' +
                 '<tr>' +
-                '<th style="width: 40px;">✓</th>' +
-                '<th>Shelf</th>' +
+                '<th style="width: 40px;">Status</th>' +
+                '<th>Brand</th>' +
                 '<th>Product Name</th>' +
                 '<th>SKU</th>' +
-                '<th style="width: 40px;">Qty</th>' +
-                '<th style="width: 70px;">Price</th>' +
-                '<th style="width: 70px;">Total</th>' +
+                '<th style="width: 50px;">Qty</th>' +
+                '<th style="width: 70px;">TM Price</th>' +
+                '<th style="width: 60px;">Margin</th>' +
                 '</tr>' +
                 '</thead>' +
                 '<tbody>' + rows + '</tbody>' +
@@ -3917,7 +4439,7 @@ CHANGELOG v2.0.2 (2025-12-27):
                 'Total Value: $' + totalValue.toFixed(2) +
                 '</div>' +
                 '<div class="legend">' +
-                '<strong>Legend:</strong> ○ = Unchecked, ✓ = Found, ✗ = Missing (highlighted in red)' +
+                '<strong>Legend:</strong> ○ = Unchecked, ✓ = Found, ◐ = Partial, ✗ = Missing, ↩ = Removed' +
                 '</div>' +
                 '</body>' +
                 '</html>';
@@ -3940,14 +4462,15 @@ CHANGELOG v2.0.2 (2025-12-27):
                 return (channels.treasuremarts || 0) > 0;
             });
             
+            // Sort by brand, then product name
             tmItems.sort((a, b) => {
-                const shelfA = a.shelfNumber || 'ZZZ';
-                const shelfB = b.shelfNumber || 'ZZZ';
-                if (shelfA !== shelfB) return shelfA.localeCompare(shelfB);
+                const brandA = a.brandName || 'ZZZ';
+                const brandB = b.brandName || 'ZZZ';
+                if (brandA !== brandB) return brandA.localeCompare(brandB);
                 return (a.productName || '').localeCompare(b.productName || '');
             });
             
-            const headers = ['Status', 'Shelf', 'Product Name', 'SKU', 'Qty', 'Price', 'Total'];
+            const headers = ['Status', 'Brand', 'Product Name', 'SKU', 'Qty', 'TM Price', 'Net Profit %'];
             const rows = [headers.join(',')];
             
             let totalItems = 0;
@@ -3957,24 +4480,34 @@ CHANGELOG v2.0.2 (2025-12-27):
                 const channels = item.channels || {};
                 const qty = channels.treasuremarts || 0;
                 const price = calculateChannelPrice(item, 'treasuremarts');
-                const lineTotal = qty * price;
+                const profitMargin = calculateTMNetProfitMargin(item, price);
                 totalItems += qty;
-                totalValue += lineTotal;
+                totalValue += qty * price;
                 
-                const status = treasureMartAudit[item.id] || 'Unchecked';
-                const statusLabel = status === 'found' ? 'Found' : (status === 'missing' ? 'MISSING' : 'Unchecked');
+                // Get audit state
+                const auditState = treasureMartAudit[item.id];
+                let status = 'Unchecked';
+                let foundQty = qty;
+                if (auditState && typeof auditState === 'object') {
+                    const s = auditState.status || 'unchecked';
+                    foundQty = auditState.foundQty !== undefined ? auditState.foundQty : qty;
+                    status = s === 'found' ? 'Found' : 
+                             s === 'partial' ? `Partial (${foundQty}/${qty})` : 
+                             s === 'missing' ? 'MISSING' : 
+                             s === 'removed' ? 'REMOVED' : 'Unchecked';
+                }
                 
                 // Escape commas and quotes in CSV
                 const escape = (str) => `"${(str || '').replace(/"/g, '""')}"`;
                 
                 rows.push([
-                    statusLabel,
-                    escape(item.shelfNumber || 'N/A'),
+                    status,
+                    escape(item.brandName || 'N/A'),
                     escape(item.productName || 'Unnamed'),
                     escape(item.sku || 'N/A'),
                     qty,
                     price.toFixed(2),
-                    lineTotal.toFixed(2)
+                    profitMargin.toFixed(1) + '%'
                 ].join(','));
             });
             
@@ -3989,7 +4522,7 @@ CHANGELOG v2.0.2 (2025-12-27):
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `TreasureMart_Inventory_${new Date().toISOString().split('T')[0]}.csv`;
+            a.download = `TreasureMart_Audit_${new Date().toISOString().split('T')[0]}.csv`;
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
