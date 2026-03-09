@@ -1,12 +1,14 @@
 <!DOCTYPE html>
 <!--
 ================================================================================
-CCD MOBILE INVENTORY MODULE v3.2 - Supabase Edition  
+CCD MOBILE INVENTORY MODULE v3.3 - Supabase Edition  
 ================================================================================
 Supabase-first mobile inventory management. Real-time sync with shared database.
 v3.1: Added user-controlled inventory sort bar
 v3.2: Channel filter pills, Low-stock toggle, Add new item, Sales history,
       Offline indicator banner
+v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
+      handling with rollback, activity_log entry written on every audit save
 ================================================================================
 -->
 <html lang="en">
@@ -490,7 +492,7 @@ v3.2: Channel filter pills, Low-stock toggle, Add new item, Sales history,
                 </div>
                 <div class="settings-section">
                     <div class="settings-section-title">Version</div>
-                    <div class="settings-item"><div class="settings-item-label">App Version</div><div class="settings-item-value">v3.2 Supabase</div></div>
+                    <div class="settings-item"><div class="settings-item-label">App Version</div><div class="settings-item-value">v3.3 Supabase</div></div>
                 </div>
             </div>
         </div>
@@ -1600,31 +1602,88 @@ v3.2: Channel filter pills, Low-stock toggle, Add new item, Sales history,
                 const item = inventory.find(i => String(i.id) === String(itemId));
                 if (!item) continue;
                 const eQ = item.channels?.treasuremarts || 0;
-                if (as.status === 'missing') { changes.push({ item, action: 'missing', deduct: eQ }); totalMissing += eQ; }
-                else if (as.status === 'partial') { const mQ = eQ - (as.foundQty || 0); if (mQ > 0) { changes.push({ item, action: 'partial', deduct: mQ }); totalPartial += mQ; } }
-                else if (as.status === 'removed') { changes.push({ item, action: 'removed', qty: eQ }); totalRemoved += eQ; }
+                if (as.status === 'missing') {
+                    changes.push({ item, action: 'missing', deduct: eQ }); totalMissing += eQ;
+                } else if (as.status === 'partial') {
+                    const mQ = eQ - (as.foundQty || 0);
+                    if (mQ > 0) { changes.push({ item, action: 'partial', deduct: mQ }); totalPartial += mQ; }
+                } else if (as.status === 'removed') {
+                    // 'removed' = physically pulled back to warehouse — restore qty to warehouse
+                    changes.push({ item, action: 'removed', qty: eQ }); totalRemoved += eQ;
+                }
             }
             if (changes.length === 0) { showToast('No changes (all found)', 'success'); return; }
             let msg = 'Save audit?\n';
-            if (totalMissing) msg += totalMissing + ' MISSING\n';
-            if (totalPartial) msg += totalPartial + ' PARTIAL missing\n';
-            if (totalRemoved) msg += totalRemoved + ' REMOVED\n';
+            if (totalMissing) msg += '• ' + totalMissing + ' units MISSING (written off)\n';
+            if (totalPartial) msg += '• ' + totalPartial + ' units PARTIAL missing (written off)\n';
+            if (totalRemoved) msg += '• ' + totalRemoved + ' units REMOVED → returned to warehouse\n';
             if (!confirm(msg)) return;
-            
+
+            let saved = 0, failed = 0;
+            const auditLog = [];
+
             for (const ch of changes) {
                 const item = ch.item;
+                const beforeQty = parseInt(item.qty) || 0;
+                const beforeTM  = item.channels?.treasuremarts || 0;
+
                 if (ch.action === 'missing' || ch.action === 'partial') {
-                    item.channels.treasuremarts = Math.max(0, (item.channels.treasuremarts || 0) - ch.deduct);
-                    item.qty = Math.max(0, (parseInt(item.qty) || 0) - ch.deduct);
+                    // Write off: deduct from both TM channel and warehouse total
+                    item.channels.treasuremarts = Math.max(0, beforeTM - ch.deduct);
+                    item.qty = Math.max(0, beforeQty - ch.deduct);
                 } else if (ch.action === 'removed') {
+                    // Return to warehouse: zero TM channel, add qty back to warehouse
                     item.channels.treasuremarts = 0;
+                    item.qty = beforeQty + ch.qty;  // FIX: restore qty to warehouse
                 }
-                if (sbConnected) await saveItemToSupabase(item);
+
+                if (sbConnected) {
+                    const ok = await saveItemToSupabase(item);
+                    if (ok) {
+                        saved++;
+                        auditLog.push({
+                            sku: item.sku, productName: item.productName,
+                            action: ch.action,
+                            tmBefore: beforeTM,
+                            tmAfter: item.channels.treasuremarts,
+                            whBefore: beforeQty,
+                            whAfter: item.qty
+                        });
+                    } else {
+                        failed++;
+                        // Roll back in-memory change so UI stays consistent with DB
+                        item.channels.treasuremarts = beforeTM;
+                        item.qty = beforeQty;
+                        showToast('⚠️ DB save failed for ' + (item.sku || 'item') + ' — changes rolled back', 'error');
+                    }
+                } else {
+                    // Offline: queue and accept locally
+                    saved++;
+                    addToOfflineQueue({ type: 'audit_save', sku: item.sku, action: ch.action, tmBefore: beforeTM, whBefore: beforeQty });
+                    auditLog.push({ sku: item.sku, action: ch.action, offline: true });
+                }
             }
-            
+
+            // FIX: write audit event to activity_log in Supabase
+            if (auditLog.length > 0) {
+                logActivity('TM_AUDIT_SAVED', {
+                    totalSaved: saved,
+                    totalFailed: failed,
+                    missing: totalMissing,
+                    partial: totalPartial,
+                    removed: totalRemoved,
+                    items: auditLog
+                });
+            }
+
             saveToStorage(); applyFilters(); updateStats();
             treasureMartAudit = {}; localStorage.removeItem('ccd_tm_audit');
-            showToast('Audit saved! ' + changes.length + ' items updated', 'success');
+
+            if (failed > 0) {
+                showToast('⚠️ ' + saved + ' saved, ' + failed + ' failed — check log', 'warning');
+            } else {
+                showToast('✅ Audit saved! ' + saved + ' items updated', 'success');
+            }
             showTreasureMartReport();
         }
         
