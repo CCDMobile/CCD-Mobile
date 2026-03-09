@@ -1,9 +1,12 @@
 <!DOCTYPE html>
 <!--
 ================================================================================
-CCD MOBILE INVENTORY MODULE v3.0 - Supabase Edition  
+CCD MOBILE INVENTORY MODULE v3.2 - Supabase Edition  
 ================================================================================
 Supabase-first mobile inventory management. Real-time sync with shared database.
+v3.1: Added user-controlled inventory sort bar
+v3.2: Channel filter pills, Low-stock toggle, Add new item, Sales history,
+      Offline indicator banner
 ================================================================================
 -->
 <html lang="en">
@@ -69,9 +72,62 @@ Supabase-first mobile inventory management. Real-time sync with shared database.
         .sync-dot.syncing { background: #F59E0B; animation: pulse 1s infinite; }
         .sync-dot.error { background: #EF4444; }
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
-        .search-bar { padding: 15px 20px; background: var(--card-bg); border-bottom: 1px solid var(--border); }
+        .search-bar { padding: 15px 20px 10px; background: var(--card-bg); border-bottom: 1px solid var(--border); }
         .search-input { width: 100%; padding: 12px 16px; border: 2px solid var(--border); border-radius: 10px; font-size: 16px; outline: none; transition: border-color 0.2s; }
         .search-input:focus { border-color: var(--primary); }
+
+        /* ── SORT BAR ── */
+        .sort-bar {
+            background: var(--card-bg);
+            border-bottom: 1px solid var(--border);
+            padding: 8px 20px 10px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            scrollbar-width: none;
+        }
+        .sort-bar::-webkit-scrollbar { display: none; }
+        .sort-label {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-light);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+        .sort-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 5px 12px;
+            border-radius: 20px;
+            border: 1.5px solid var(--border);
+            background: var(--bg);
+            color: var(--text-light);
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            white-space: nowrap;
+            flex-shrink: 0;
+            transition: all 0.18s;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .sort-btn:active { transform: scale(0.95); }
+        .sort-btn.active {
+            background: var(--primary);
+            border-color: var(--primary);
+            color: white;
+        }
+        .sort-arrow {
+            font-size: 10px;
+            opacity: 0.7;
+            transition: transform 0.2s;
+        }
+        .sort-btn.active .sort-arrow { opacity: 1; }
+
         .stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; padding: 15px 20px; background: var(--card-bg); }
         .stat-card { background: linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%); padding: 15px; border-radius: 12px; color: white; }
         .stat-label { font-size: 12px; opacity: 0.9; margin-bottom: 4px; }
@@ -159,6 +215,113 @@ Supabase-first mobile inventory management. Real-time sync with shared database.
         .sale-info-sku { font-size: 13px; color: var(--text-light); }
         .sale-form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
         @media (max-width: 380px) { .sale-form-row { grid-template-columns: 1fr; } }
+
+        /* ── OFFLINE BANNER ── */
+        .offline-banner {
+            background: #92400E;
+            color: #FEF3C7;
+            padding: 10px 20px;
+            display: none;
+            align-items: center;
+            gap: 10px;
+            font-size: 13px;
+            font-weight: 500;
+            border-bottom: 1px solid #B45309;
+        }
+        .offline-banner.visible { display: flex; }
+        .offline-banner-icon { font-size: 16px; flex-shrink: 0; }
+        .offline-banner-text { flex: 1; }
+        .offline-banner-dismiss { background: none; border: none; color: #FEF3C7; font-size: 18px; cursor: pointer; padding: 0; line-height: 1; }
+
+        /* ── CHANNEL FILTER BAR ── */
+        .filter-bar {
+            background: var(--card-bg);
+            border-bottom: 1px solid var(--border);
+            padding: 8px 20px 10px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            scrollbar-width: none;
+        }
+        .filter-bar::-webkit-scrollbar { display: none; }
+        .filter-label {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-light);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+        .filter-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 5px 12px;
+            border-radius: 20px;
+            border: 1.5px solid var(--border);
+            background: var(--bg);
+            color: var(--text-light);
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            white-space: nowrap;
+            flex-shrink: 0;
+            transition: all 0.18s;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .filter-pill:active { transform: scale(0.95); }
+        .filter-pill.active {
+            background: var(--primary);
+            border-color: var(--primary);
+            color: white;
+        }
+        .filter-pill.low-stock { border-color: #F59E0B; color: #B45309; }
+        .filter-pill.low-stock.active { background: #F59E0B; border-color: #F59E0B; color: white; }
+        .filter-divider {
+            width: 1px;
+            height: 20px;
+            background: var(--border);
+            flex-shrink: 0;
+            margin: 0 2px;
+        }
+
+        /* ── ITEM QTY COLOR STATES ── */
+        .item-qty.qty-zero { color: var(--danger); }
+        .item-qty.qty-low  { color: var(--warning); }
+
+        /* ── SALES HISTORY ── */
+        .sale-hist-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 0;
+            border-bottom: 1px solid var(--border);
+            gap: 10px;
+        }
+        .sale-hist-row:last-child { border-bottom: none; }
+        .sale-hist-left { flex: 1; min-width: 0; }
+        .sale-hist-product { font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .sale-hist-meta { font-size: 12px; color: var(--text-light); margin-top: 2px; }
+        .sale-hist-right { text-align: right; flex-shrink: 0; }
+        .sale-hist-amount { font-weight: 700; color: var(--success); font-size: 15px; }
+        .sale-hist-qty { font-size: 12px; color: var(--text-light); }
+        .channel-badge {
+            display: inline-block;
+            padding: 2px 7px;
+            border-radius: 10px;
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+        .badge-etsy       { background: #F3E8FF; color: #6D28D9; }
+        .badge-wix        { background: #E0F2FE; color: #0369A1; }
+        .badge-wayfair    { background: #FEF9C3; color: #854D0E; }
+        .badge-treasuremarts { background: #DCFCE7; color: #14532D; }
+        .badge-other      { background: var(--bg); color: var(--text-light); }
     </style>
 </head>
 <body>
@@ -195,6 +358,8 @@ Supabase-first mobile inventory management. Real-time sync with shared database.
             <div class="header-top">
                 <div class="header-title">🐮 CCD Inventory</div>
                 <div class="header-actions">
+                    <button class="header-btn" onclick="showSalesHistory()" title="Sales History">📈</button>
+                    <button class="header-btn" onclick="openAddItemModal()" title="Add Item">➕</button>
                     <button class="header-btn" onclick="showSettings()" title="Settings">⚙️</button>
                 </div>
             </div>
@@ -204,8 +369,47 @@ Supabase-first mobile inventory management. Real-time sync with shared database.
             </div>
         </div>
 
+        <!-- ── OFFLINE BANNER ── -->
+        <div class="offline-banner" id="offlineBanner">
+            <span class="offline-banner-icon">📡</span>
+            <span class="offline-banner-text">Offline — changes will sync when reconnected</span>
+            <button class="offline-banner-dismiss" onclick="document.getElementById('offlineBanner').classList.remove('visible')" title="Dismiss">×</button>
+        </div>
+
         <div class="search-bar">
             <input type="text" class="search-input" id="searchInput" placeholder="Search SKU, Product, or Brand..." oninput="applyFilters()">
+        </div>
+
+        <!-- ── SORT BAR ── -->
+        <div class="sort-bar" id="sortBar">
+            <span class="sort-label">Sort:</span>
+            <button class="sort-btn active" id="sortBtn-brand" onclick="setSort('brand')">
+                Brand <span class="sort-arrow" id="sortArrow-brand">▲</span>
+            </button>
+            <button class="sort-btn" id="sortBtn-product" onclick="setSort('product')">
+                Product <span class="sort-arrow" id="sortArrow-product">▲</span>
+            </button>
+            <button class="sort-btn" id="sortBtn-sku" onclick="setSort('sku')">
+                SKU <span class="sort-arrow" id="sortArrow-sku">▲</span>
+            </button>
+            <button class="sort-btn" id="sortBtn-qty" onclick="setSort('qty')">
+                Qty <span class="sort-arrow" id="sortArrow-qty">▼</span>
+            </button>
+            <button class="sort-btn" id="sortBtn-price" onclick="setSort('price')">
+                Retail $ <span class="sort-arrow" id="sortArrow-price">▼</span>
+            </button>
+        </div>
+
+        <!-- ── CHANNEL FILTER BAR ── -->
+        <div class="filter-bar" id="filterBar">
+            <span class="filter-label">Filter:</span>
+            <button class="filter-pill active" id="fpAll"           onclick="setChannelFilter('all')">All</button>
+            <button class="filter-pill"        id="fpEtsy"          onclick="setChannelFilter('etsy')">🏷 Etsy</button>
+            <button class="filter-pill"        id="fpWix"           onclick="setChannelFilter('wix')">🌐 Wix</button>
+            <button class="filter-pill"        id="fpWayfair"       onclick="setChannelFilter('wayfair')">🏠 Wayfair</button>
+            <button class="filter-pill"        id="fpTreasureMarts" onclick="setChannelFilter('treasuremarts')">💎 TM</button>
+            <div class="filter-divider"></div>
+            <button class="filter-pill low-stock" id="fpLowStock"  onclick="toggleLowStock()">⚠️ Low/Zero</button>
         </div>
 
         <div class="stats">
@@ -280,12 +484,13 @@ Supabase-first mobile inventory management. Real-time sync with shared database.
                 <div class="settings-section">
                     <div class="settings-section-title">Actions</div>
                     <button class="settings-button" onclick="showTreasureMartReport()" style="background: #10B981; color: white;">📊 TreasureMart Report</button>
+                    <button class="settings-button" onclick="showSalesHistory()">📈 Sales History</button>
                     <button class="settings-button" onclick="showActivityLog()">📋 View Activity Log</button>
                     <button class="settings-button danger" onclick="confirmClearData()">🗑️ Clear Local Data</button>
                 </div>
                 <div class="settings-section">
                     <div class="settings-section-title">Version</div>
-                    <div class="settings-item"><div class="settings-item-label">App Version</div><div class="settings-item-value">v3.0 Supabase</div></div>
+                    <div class="settings-item"><div class="settings-item-label">App Version</div><div class="settings-item-value">v3.2 Supabase</div></div>
                 </div>
             </div>
         </div>
@@ -372,12 +577,85 @@ Supabase-first mobile inventory management. Real-time sync with shared database.
         </div>
     </div>
 
+    <!-- Add New Item Modal -->
+    <div class="modal" id="addItemModal" onclick="closeAddItemModalOutside(event)">
+        <div class="modal-content">
+            <div class="modal-header" style="background: linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%); color: white; border-radius: 16px 16px 0 0;">
+                <div class="modal-title" style="color: white;">➕ New Item</div>
+                <button class="modal-close" onclick="closeAddItemModal()" style="color: white;">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group"><label class="form-label">Product Name *</label><input type="text" class="form-input" id="newProductName" placeholder="e.g. Rustic Barn Door Sign"></div>
+                <div class="form-group"><label class="form-label">SKU *</label><input type="text" class="form-input" id="newSku" placeholder="e.g. RBD-001" style="text-transform: uppercase;"></div>
+                <div class="form-group"><label class="form-label">Brand</label><input type="text" class="form-input" id="newBrand" placeholder="e.g. Country Charm"></div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 20px;">
+                    <div><label class="form-label">Qty *</label><input type="number" class="form-input" id="newQty" min="0" value="1" style="font-weight: 600;"></div>
+                    <div><label class="form-label">Wholesale $</label><input type="number" class="form-input" id="newWholesale" min="0" step="0.01" placeholder="0.00"></div>
+                    <div><label class="form-label">Retail $</label><input type="number" class="form-input" id="newRetail" min="0" step="0.01" placeholder="0.00"></div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Channel Allocation</label>
+                    <div class="channel-inputs">
+                        <div class="channel-input-group"><label class="channel-input-label">Etsy</label><input type="number" class="channel-input" id="newEtsy" min="0" value="0" oninput="updateNewItemTotal()"></div>
+                        <div class="channel-input-group"><label class="channel-input-label">Wix</label><input type="number" class="channel-input" id="newWix" min="0" value="0" oninput="updateNewItemTotal()"></div>
+                        <div class="channel-input-group"><label class="channel-input-label">Wayfair</label><input type="number" class="channel-input" id="newWayfair" min="0" value="0" oninput="updateNewItemTotal()"></div>
+                        <div class="channel-input-group"><label class="channel-input-label">TreasureMarts</label><input type="number" class="channel-input" id="newTreasureMarts" min="0" value="0" oninput="updateNewItemTotal()"></div>
+                    </div>
+                    <div class="total-qty-display">Allocated: <span id="newItemTotalQty" style="font-weight: 600;">0</span></div>
+                </div>
+                <div class="form-group"><label class="form-label">Shelf #</label><input type="text" class="form-input" id="newShelf" placeholder="e.g. A-12"></div>
+                <div class="button-group">
+                    <button class="btn btn-secondary" onclick="closeAddItemModal()">Cancel</button>
+                    <button class="btn btn-primary" onclick="saveNewItem()">💾 Save Item</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Sales History Modal -->
+    <div class="modal" id="salesHistoryModal" onclick="closeSalesHistoryModalOutside(event)">
+        <div class="modal-content" style="max-width: 560px;">
+            <div class="modal-header" style="background: linear-gradient(135deg, #10B981 0%, #047857 100%); color: white; border-radius: 16px 16px 0 0;">
+                <div class="modal-title" style="color: white;">📈 Sales History</div>
+                <button class="modal-close" onclick="closeSalesHistoryModal()" style="color: white;">×</button>
+            </div>
+            <div class="modal-body" style="padding: 0;">
+                <!-- Filter row -->
+                <div style="padding: 10px 15px; background: #F0FDF4; border-bottom: 1px solid #D1FAE5; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                    <select id="shChannelFilter" onchange="renderSalesHistory()" style="padding: 6px 10px; border: 1px solid #D1FAE5; border-radius: 8px; font-size: 13px; background: white; flex: 1; min-width: 100px;">
+                        <option value="">All Channels</option>
+                        <option value="etsy">Etsy</option>
+                        <option value="wix">Wix</option>
+                        <option value="wayfair">Wayfair</option>
+                        <option value="treasuremarts">TreasureMarts</option>
+                    </select>
+                    <select id="shLimitFilter" onchange="loadSalesHistory()" style="padding: 6px 10px; border: 1px solid #D1FAE5; border-radius: 8px; font-size: 13px; background: white; flex: 1; min-width: 100px;">
+                        <option value="25">Last 25</option>
+                        <option value="50" selected>Last 50</option>
+                        <option value="100">Last 100</option>
+                    </select>
+                </div>
+                <!-- Summary row -->
+                <div style="padding: 10px 15px; background: #F0FDF4; border-bottom: 1px solid #D1FAE5; display: flex; justify-content: space-around; text-align: center;">
+                    <div><div style="font-size: 10px; color: #059669; font-weight: 600; text-transform: uppercase;">Sales</div><div style="font-size: 18px; font-weight: 700; color: #047857;" id="shStatSales">—</div></div>
+                    <div><div style="font-size: 10px; color: #059669; font-weight: 600; text-transform: uppercase;">Units</div><div style="font-size: 18px; font-weight: 700; color: #047857;" id="shStatUnits">—</div></div>
+                    <div><div style="font-size: 10px; color: #059669; font-weight: 600; text-transform: uppercase;">Revenue</div><div style="font-size: 18px; font-weight: 700; color: #047857;" id="shStatRevenue">—</div></div>
+                    <div><div style="font-size: 10px; color: #059669; font-weight: 600; text-transform: uppercase;">Profit</div><div style="font-size: 18px; font-weight: 700; color: #047857;" id="shStatProfit">—</div></div>
+                </div>
+                <!-- List -->
+                <div id="salesHistoryList" style="max-height: 420px; overflow-y: auto; padding: 10px 15px;">
+                    <div class="empty-state" style="padding: 40px 0;"><div class="empty-icon">📊</div><div class="empty-title">No Sales Yet</div></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Toast -->
     <div class="toast" id="toast"></div>
 
     <script>
         // ============================================================================
-        // CCD MOBILE v3.0 — SUPABASE EDITION
+        // CCD MOBILE v3.2 — SUPABASE EDITION
         // ============================================================================
         
         const CORRECT_PIN = '1234';
@@ -444,14 +722,123 @@ Supabase-first mobile inventory management. Real-time sync with shared database.
         let offlineQueue = [];
         let isConnected = false;
         const SAVE_COOLDOWN_MS = 15000;
+
+        // ── SORT STATE ──────────────────────────────────────────────────────────────
+        // field: 'brand' | 'product' | 'sku' | 'qty' | 'price'
+        // dir:   'asc' | 'desc'
+        // Default directions per field (natural intuitive defaults)
+        const SORT_DEFAULT_DIR = { brand: 'asc', product: 'asc', sku: 'asc', qty: 'desc', price: 'desc' };
+        let currentSort = { field: 'brand', dir: 'asc' };
+
+        // ── FILTER STATE ─────────────────────────────────────────────────────────────
+        let channelFilter = 'all';   // 'all' | 'etsy' | 'wix' | 'wayfair' | 'treasuremarts'
+        let showLowStock  = false;   // true = only items with qty=0 or qty < minParLevel
+        let salesHistoryCache = [];  // cached results from Supabase
+        // ────────────────────────────────────────────────────────────────────────────
         
         // Supabase
         let sbClient = null;
         let sbConnected = false;
         
         // ============================================================================
-        // SUPABASE CONNECTION LAYER
+        // SORT BAR
         // ============================================================================
+
+        function setSort(field) {
+            if (currentSort.field === field) {
+                // Same field: flip direction
+                currentSort.dir = currentSort.dir === 'asc' ? 'desc' : 'asc';
+            } else {
+                // New field: use default direction for that field
+                currentSort.field = field;
+                currentSort.dir = SORT_DEFAULT_DIR[field] || 'asc';
+            }
+            updateSortUI();
+            applyFilters();
+        }
+
+        function updateSortUI() {
+            const fields = ['brand', 'product', 'sku', 'qty', 'price'];
+            fields.forEach(f => {
+                const btn = document.getElementById('sortBtn-' + f);
+                const arrow = document.getElementById('sortArrow-' + f);
+                if (!btn || !arrow) return;
+                const isActive = currentSort.field === f;
+                btn.classList.toggle('active', isActive);
+                if (isActive) {
+                    arrow.textContent = currentSort.dir === 'asc' ? '▲' : '▼';
+                } else {
+                    // Show default direction hint when inactive
+                    arrow.textContent = SORT_DEFAULT_DIR[f] === 'asc' ? '▲' : '▼';
+                }
+            });
+        }
+
+        function sortInventory(items) {
+            const { field, dir } = currentSort;
+            const mul = dir === 'asc' ? 1 : -1;
+            return [...items].sort((a, b) => {
+                let va, vb;
+                switch (field) {
+                    case 'brand':
+                        va = (a.brandName || '').toLowerCase();
+                        vb = (b.brandName || '').toLowerCase();
+                        return mul * (va < vb ? -1 : va > vb ? 1 : 0);
+                    case 'product':
+                        va = (a.productName || '').toLowerCase();
+                        vb = (b.productName || '').toLowerCase();
+                        return mul * (va < vb ? -1 : va > vb ? 1 : 0);
+                    case 'sku':
+                        va = (a.sku || '').toLowerCase();
+                        vb = (b.sku || '').toLowerCase();
+                        return mul * (va < vb ? -1 : va > vb ? 1 : 0);
+                    case 'qty':
+                        va = getTotalQty(a);
+                        vb = getTotalQty(b);
+                        return mul * (va - vb);
+                    case 'price':
+                        va = parseFloat(a.retailPrice) || 0;
+                        vb = parseFloat(b.retailPrice) || 0;
+                        return mul * (va - vb);
+                    default:
+                        return 0;
+                }
+            });
+        }
+
+        // ============================================================================
+        // CHANNEL FILTER BAR
+        // ============================================================================
+
+        function setChannelFilter(ch) {
+            channelFilter = ch;
+            const pills = ['All','Etsy','Wix','Wayfair','TreasureMarts'];
+            const ids   = ['fpAll','fpEtsy','fpWix','fpWayfair','fpTreasureMarts'];
+            const vals  = ['all','etsy','wix','wayfair','treasuremarts'];
+            ids.forEach((id, i) => {
+                const el = document.getElementById(id);
+                if (el) el.classList.toggle('active', vals[i] === ch);
+            });
+            applyFilters();
+        }
+
+        function toggleLowStock() {
+            showLowStock = !showLowStock;
+            const btn = document.getElementById('fpLowStock');
+            if (btn) btn.classList.toggle('active', showLowStock);
+            applyFilters();
+        }
+
+        // ============================================================================
+        // OFFLINE BANNER
+        // ============================================================================
+
+        function updateOfflineBanner() {
+            const banner = document.getElementById('offlineBanner');
+            if (!banner) return;
+            const offline = !navigator.onLine || !isConnected;
+            banner.classList.toggle('visible', offline);
+        }
         
         function getSbCredentials() {
             let url = localStorage.getItem('ccd_supabase_url') || '';
@@ -594,7 +981,7 @@ Supabase-first mobile inventory management. Real-time sync with shared database.
                 await sbClient.from('activity_log').insert({
                     category: 'mobile', action: action, channel: 'system',
                     summary: action, details: typeof details === 'object' ? details : { info: details },
-                    device: 'Mobile-v3.0', user_name: 'Mobile'
+                    device: 'Mobile-v3.2', user_name: 'Mobile'
                 });
             } catch (e) { /* silent */ }
         }
@@ -731,6 +1118,7 @@ Supabase-first mobile inventory management. Real-time sync with shared database.
                 else if (isConnected) sd.className = 'sync-dot';
                 else sd.className = 'sync-dot error';
             }
+            updateOfflineBanner();
         }
         
         // ============================================================================
@@ -766,7 +1154,6 @@ Supabase-first mobile inventory management. Real-time sync with shared database.
         async function syncOfflineQueue() {
             if (offlineQueue.length === 0 || !sbConnected) return;
             showToast('Syncing ' + offlineQueue.length + ' offline changes...', 'warning');
-            // For Supabase, offline changes are item-level, just reload
             offlineQueue = [];
             saveOfflineQueue();
             showToast('Offline queue cleared', 'success');
@@ -815,18 +1202,35 @@ Supabase-first mobile inventory management. Real-time sync with shared database.
         
         function applyFilters() {
             const q = (document.getElementById('searchInput')?.value || '').toLowerCase();
-            filteredInventory = inventory.filter(item => !q || 
+            // 1. Text search
+            let result = inventory.filter(item => !q || 
                 (item.sku && item.sku.toLowerCase().includes(q)) ||
                 (item.productName && item.productName.toLowerCase().includes(q)) ||
                 (item.brandName && item.brandName.toLowerCase().includes(q))
             );
+            // 2. Channel filter
+            if (channelFilter !== 'all') {
+                result = result.filter(item => (item.channels?.[channelFilter] || 0) > 0);
+            }
+            // 3. Low / zero stock filter
+            if (showLowStock) {
+                result = result.filter(item => {
+                    const qty = getTotalQty(item);
+                    if (qty === 0) return true;
+                    if (item.minParLevel > 0 && qty < item.minParLevel) return true;
+                    return false;
+                });
+            }
+            // 4. Sort
+            result = sortInventory(result);
+            filteredInventory = result;
             renderInventoryList();
         }
         
         function renderInventoryList() {
             const listDiv = document.getElementById('inventoryList');
             if (filteredInventory.length === 0) {
-                listDiv.innerHTML = '<div class="empty-state"><div class="empty-icon">🔍</div><div class="empty-title">No Items Found</div><div class="empty-message">Try adjusting your search or connect to Database in Settings.</div></div>';
+                listDiv.innerHTML = '<div class="empty-state"><div class="empty-icon">🔍</div><div class="empty-title">No Items Found</div><div class="empty-message">Try adjusting your search or filters, or connect to Database in Settings.</div></div>';
                 return;
             }
             listDiv.innerHTML = filteredInventory.map(item => {
@@ -836,10 +1240,14 @@ Supabase-first mobile inventory management. Real-time sync with shared database.
                 const wp = calculateChannelPrice(item, 'wix');
                 const wfp = calculateChannelPrice(item, 'wayfair');
                 const tp = calculateChannelPrice(item, 'treasuremarts');
+                // Qty colour class
+                let qtyClass = 'item-qty';
+                if (wQty === 0) qtyClass += ' qty-zero';
+                else if (item.minParLevel > 0 && wQty < item.minParLevel) qtyClass += ' qty-low';
                 return `<div class="inventory-item" onclick="openItemModal('${item.id}')">
                     <div class="item-header"><div><div class="item-title">${item.productName || 'Unnamed'}</div>
                     <div class="item-sku">SKU: ${item.sku || 'N/A'} | ${item.brandName || 'No Brand'} | OB: $${(parseFloat(item.obShipping) || 0).toFixed(2)}</div></div>
-                    <div class="item-qty">${wQty}</div></div>
+                    <div class="${qtyClass}">${wQty}</div></div>
                     <div class="item-details"><div class="detail-item"><span class="detail-label">Retail:</span><span class="detail-value">$${(parseFloat(item.retailPrice) || 0).toFixed(2)}</span></div>
                     <div class="detail-item"><span class="detail-label">Shelf:</span><span class="detail-value">${item.shelfNumber || 'N/A'}</span></div></div>
                     <div class="item-channels">
@@ -1015,7 +1423,6 @@ Supabase-first mobile inventory management. Real-time sync with shared database.
         function showSettings() {
             updateConnectionUI();
             if (lastSyncTime) document.getElementById('lastSyncDate').textContent = formatTime(lastSyncTime);
-            // Populate Supabase fields
             const creds = getSbCredentials();
             const urlEl = document.getElementById('sbUrlInput');
             const keyEl = document.getElementById('sbKeyInput');
@@ -1049,7 +1456,7 @@ Supabase-first mobile inventory management. Real-time sync with shared database.
         }
         
         // ============================================================================
-        // TREASUREMART INVENTORY AUDIT (kept from v2.5.4)
+        // TREASUREMART INVENTORY AUDIT
         // ============================================================================
         
         let treasureMartAudit = {};
@@ -1331,13 +1738,177 @@ Supabase-first mobile inventory management. Real-time sync with shared database.
         }
         
         // ============================================================================
+        // ADD NEW ITEM
+        // ============================================================================
+
+        function openAddItemModal() {
+            // Clear form
+            ['newProductName','newSku','newBrand','newShelf'].forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
+            document.getElementById('newQty').value = 1;
+            document.getElementById('newWholesale').value = '';
+            document.getElementById('newRetail').value = '';
+            ['newEtsy','newWix','newWayfair','newTreasureMarts'].forEach(id => { const el = document.getElementById(id); if(el) el.value = 0; });
+            updateNewItemTotal();
+            document.getElementById('addItemModal').classList.add('active');
+        }
+        function closeAddItemModal() { document.getElementById('addItemModal').classList.remove('active'); }
+        function closeAddItemModalOutside(e) { if (e.target === e.currentTarget) closeAddItemModal(); }
+
+        function updateNewItemTotal() {
+            const t = (parseInt(document.getElementById('newEtsy').value)||0) +
+                      (parseInt(document.getElementById('newWix').value)||0) +
+                      (parseInt(document.getElementById('newWayfair').value)||0) +
+                      (parseInt(document.getElementById('newTreasureMarts').value)||0);
+            document.getElementById('newItemTotalQty').textContent = t;
+        }
+
+        async function saveNewItem() {
+            const name = document.getElementById('newProductName').value.trim();
+            const sku  = document.getElementById('newSku').value.trim().toUpperCase();
+            if (!name) { showToast('Product name is required', 'error'); return; }
+            if (!sku)  { showToast('SKU is required', 'error'); return; }
+            // Duplicate check
+            if (inventory.find(i => i.sku === sku)) { showToast('SKU already exists: ' + sku, 'error'); return; }
+
+            const qty  = parseInt(document.getElementById('newQty').value) || 0;
+            const alloc = {
+                etsy: parseInt(document.getElementById('newEtsy').value) || 0,
+                wix:  parseInt(document.getElementById('newWix').value)  || 0,
+                wayfair: parseInt(document.getElementById('newWayfair').value) || 0,
+                treasuremarts: parseInt(document.getElementById('newTreasureMarts').value) || 0,
+                crazychicks: 0
+            };
+            if (alloc.etsy !== alloc.wix) { showToast('Etsy and Wix must match', 'error'); return; }
+
+            const newItem = {
+                sku, productName: name,
+                brandName: document.getElementById('newBrand').value.trim(),
+                shelfNumber: document.getElementById('newShelf').value.trim(),
+                qty, isActive: true,
+                wholesalePrice: parseFloat(document.getElementById('newWholesale').value) || 0,
+                retailPrice:    parseFloat(document.getElementById('newRetail').value)    || 0,
+                ibShipping: 0, tariff: 0, obShipping: 0, coopPrice: null,
+                channels: alloc,
+                channelPriceAdjustments: { etsy:0, wix:0, wayfair:0, crazychicks:0, treasuremarts:0 },
+                channelParEnabled: false, channelParMin: 0, minParLevel: 0, maxParLevel: 0
+            };
+
+            if (sbConnected) {
+                try {
+                    const row = itemToSbRow(newItem);
+                    const { data, error } = await sbClient.from('items').insert(row).select().single();
+                    if (error) throw error;
+                    newItem.id = data.id;
+                    inventory.push(newItem);
+                    applyFilters(); updateStats(); saveToStorage();
+                    logActivity('ITEM_ADDED', { sku, productName: name });
+                    closeAddItemModal();
+                    showToast('✅ ' + name + ' added!', 'success');
+                } catch(e) {
+                    showToast('Save failed: ' + e.message, 'error');
+                }
+            } else {
+                newItem.id = 'local_' + Date.now();
+                inventory.push(newItem);
+                applyFilters(); updateStats(); saveToStorage();
+                addToOfflineQueue({ type: 'add', item: newItem });
+                closeAddItemModal();
+                showToast('Saved offline — will sync when connected', 'warning');
+            }
+        }
+
+        // ============================================================================
+        // SALES HISTORY
+        // ============================================================================
+
+        async function showSalesHistory() {
+            document.getElementById('salesHistoryModal').classList.add('active');
+            closeSettings();
+            await loadSalesHistory();
+        }
+        function closeSalesHistoryModal() { document.getElementById('salesHistoryModal').classList.remove('active'); }
+        function closeSalesHistoryModalOutside(e) { if (e.target === e.currentTarget) closeSalesHistoryModal(); }
+
+        async function loadSalesHistory() {
+            const list = document.getElementById('salesHistoryList');
+            const limit = parseInt(document.getElementById('shLimitFilter')?.value || '50');
+            list.innerHTML = '<div style="text-align:center;padding:30px;color:#6B7280;">Loading...</div>';
+
+            if (!sbClient || !sbConnected) {
+                // Fall back to localStorage sales
+                salesHistoryCache = (JSON.parse(localStorage.getItem('ccd_mobile_sales') || '[]'))
+                    .slice(-limit)
+                    .map(s => ({
+                        sku: s.sku, product_name: s.sku, brand_name: '', qty_sold: s.qtySold,
+                        sale_channel: s.channel, sale_date: s.timestamp?.split('T')[0] || '',
+                        sale_price: s.salePrice, total_revenue: s.salePrice * s.qtySold,
+                        net_profit: null
+                    }));
+                renderSalesHistory();
+                return;
+            }
+            try {
+                const { data, error } = await sbClient.from('sales_history')
+                    .select('*').order('sale_date', { ascending: false }).limit(limit);
+                if (error) throw error;
+                salesHistoryCache = data || [];
+                renderSalesHistory();
+            } catch(e) {
+                list.innerHTML = '<div style="text-align:center;padding:30px;color:#EF4444;">Failed to load: ' + e.message + '</div>';
+            }
+        }
+
+        function renderSalesHistory() {
+            const list = document.getElementById('salesHistoryList');
+            const chFilter = document.getElementById('shChannelFilter')?.value || '';
+            let rows = salesHistoryCache;
+            if (chFilter) rows = rows.filter(r => (r.sale_channel || '').toLowerCase() === chFilter);
+
+            // Stats
+            const totalSales   = rows.length;
+            const totalUnits   = rows.reduce((s,r) => s + (r.qty_sold||0), 0);
+            const totalRevenue = rows.reduce((s,r) => s + (r.total_revenue || (r.sale_price||0)*(r.qty_sold||1)), 0);
+            const totalProfit  = rows.reduce((s,r) => s + (r.net_profit || 0), 0);
+            const setEl = (id, v) => { const el = document.getElementById(id); if(el) el.textContent = v; };
+            setEl('shStatSales',   totalSales);
+            setEl('shStatUnits',   totalUnits);
+            setEl('shStatRevenue', '$' + totalRevenue.toFixed(2));
+            setEl('shStatProfit',  totalProfit ? '$' + totalProfit.toFixed(2) : '—');
+
+            if (rows.length === 0) {
+                list.innerHTML = '<div class="empty-state" style="padding:40px 0;"><div class="empty-icon">📊</div><div class="empty-title">No Sales Found</div></div>';
+                return;
+            }
+            const badgeClass = ch => ({ etsy:'badge-etsy', wix:'badge-wix', wayfair:'badge-wayfair', treasuremarts:'badge-treasuremarts' }[ch] || 'badge-other');
+            list.innerHTML = rows.map(r => {
+                const ch = (r.sale_channel || '').toLowerCase();
+                const revenue = r.total_revenue || ((r.sale_price||0)*(r.qty_sold||1));
+                const dateStr = r.sale_date ? new Date(r.sale_date + 'T12:00:00').toLocaleDateString('en-US', {month:'short', day:'numeric', year:'2-digit'}) : '—';
+                return `<div class="sale-hist-row">
+                    <div class="sale-hist-left">
+                        <div class="sale-hist-product">${r.product_name || r.sku || 'Unknown'}</div>
+                        <div class="sale-hist-meta">
+                            <span class="channel-badge ${badgeClass(ch)}">${ch || '?'}</span>
+                            &nbsp;SKU: ${r.sku || '—'} &nbsp;·&nbsp; ${dateStr}
+                        </div>
+                    </div>
+                    <div class="sale-hist-right">
+                        <div class="sale-hist-amount">$${revenue.toFixed(2)}</div>
+                        <div class="sale-hist-qty">×${r.qty_sold || 1} @ $${(r.sale_price||0).toFixed(2)}</div>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        // ============================================================================
         // INITIALIZATION
         // ============================================================================
         
         async function initApp() {
             loadLogFromStorage();
             loadOfflineQueue();
-            logActivity('APP_INIT', { version: '3.0-Supabase' });
+            updateSortUI(); // initialise sort bar visual state
+            logActivity('APP_INIT', { version: '3.2-Supabase' });
             
             // Try auto-connect to Supabase
             const creds = getSbCredentials();
@@ -1349,12 +1920,13 @@ Supabase-first mobile inventory management. Real-time sync with shared database.
                 await connectSupabase();
             }
             
-            if (!sbConnected) loadFromStorage();
+            if (!sbConnected) { loadFromStorage(); updateOfflineBanner(); }
         }
         
         document.addEventListener('DOMContentLoaded', function() {
             loadLogFromStorage();
             loadOfflineQueue();
+            updateSortUI(); // render initial sort bar state before auth check
             
             const auth = localStorage.getItem('ccd_mobile_auth');
             const exp = localStorage.getItem('ccd_mobile_auth_expiry');
@@ -1381,7 +1953,9 @@ Supabase-first mobile inventory management. Real-time sync with shared database.
         });
         
         // Handle online/offline
-        window.addEventListener('online', () => { if (sbConnected && offlineQueue.length > 0) setTimeout(syncOfflineQueue, 1000); });
+        window.addEventListener('online',  () => { updateOfflineBanner(); if (sbConnected && offlineQueue.length > 0) setTimeout(syncOfflineQueue, 1000); });
+        window.addEventListener('offline', () => { updateOfflineBanner(); });
+
         // Register Service Worker
         if ("serviceWorker" in navigator) {
             window.addEventListener("load", () => {
