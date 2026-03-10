@@ -343,38 +343,50 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
             color: var(--text-light);
             text-transform: uppercase;
             letter-spacing: 0.5px;
-            margin-bottom: 10px;
+            margin-bottom: 8px;
         }
-        .financial-grid {
-            display: grid;
-            grid-template-columns: 90px 1fr 1fr 1fr;
-            gap: 4px;
+        .financial-table {
+            width: 100%;
+            border-collapse: collapse;
             font-size: 12px;
         }
-        .financial-grid-header {
+        .financial-table thead th {
             font-size: 10px;
             font-weight: 600;
             color: var(--text-light);
-            padding-bottom: 4px;
+            padding: 3px 4px 6px;
             border-bottom: 1px solid var(--border);
-            margin-bottom: 2px;
+            text-align: right;
         }
-        .financial-grid-row { display: contents; }
-        .financial-ch-label { color: var(--text-light); padding: 3px 0; }
-        .financial-val { text-align: right; padding: 3px 4px; font-weight: 500; }
-        .financial-val.null-val { color: var(--text-light); font-style: italic; }
-        .financial-val.profit-pos { color: var(--success); }
-        .financial-val.profit-neg { color: var(--danger); }
+        .financial-table thead th:first-child { text-align: left; padding-left: 0; }
+        .financial-table tbody td {
+            padding: 5px 4px;
+            border-bottom: 1px solid #F3F4F6;
+            text-align: right;
+            font-weight: 500;
+            font-size: 12px;
+            white-space: nowrap;
+        }
+        .financial-table tbody tr:last-child td { border-bottom: none; }
+        .financial-table tbody td:first-child {
+            text-align: left;
+            color: var(--text-light);
+            padding-left: 0;
+            font-weight: 500;
+        }
+        .fin-null  { color: var(--text-light); font-style: italic; font-weight: 400; }
+        .fin-pos   { color: var(--success); }
+        .fin-neg   { color: var(--danger); }
         .financial-footer {
             margin-top: 8px;
             padding-top: 8px;
             border-top: 1px solid var(--border);
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 6px;
+            display: flex;
+            justify-content: space-between;
+            gap: 8px;
             font-size: 12px;
         }
-        .financial-footer-item { display: flex; justify-content: space-between; align-items: center; }
+        .financial-footer-item { display: flex; gap: 4px; align-items: center; }
         .financial-footer-label { color: var(--text-light); }
         .financial-footer-val { font-weight: 600; }
     </style>
@@ -505,13 +517,17 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                 <!-- Stored Financial Data (read-only, written by desktop) -->
                 <div class="financial-panel">
                     <div class="financial-panel-title">📊 Stored Financials (Desktop)</div>
-                    <div class="financial-grid">
-                        <div class="financial-grid-header"></div>
-                        <div class="financial-grid-header" style="text-align:right;">Price</div>
-                        <div class="financial-grid-header" style="text-align:right;">Net Profit</div>
-                        <div class="financial-grid-header" style="text-align:right;">Margin</div>
-                        <div id="itemFinancialRows"></div>
-                    </div>
+                    <table class="financial-table">
+                        <thead>
+                            <tr>
+                                <th></th>
+                                <th>Price</th>
+                                <th>Net Profit</th>
+                                <th>Margin</th>
+                            </tr>
+                        </thead>
+                        <tbody id="itemFinancialRows"></tbody>
+                    </table>
                     <div class="financial-footer">
                         <div class="financial-footer-item">
                             <span class="financial-footer-label">Cost Basis:</span>
@@ -1431,10 +1447,10 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
 
         function populateFinancialPanel(item) {
             const channels = [
-                { key: 'etsy',          label: '🏷 Etsy'  },
-                { key: 'wix',           label: '🌐 Wix'   },
-                { key: 'wayfair',       label: '🏠 Wayfair'},
-                { key: 'treasuremarts', label: '💎 TM'    },
+                { key: 'etsy',          label: '🏷 Etsy'   },
+                { key: 'wix',           label: '🌐 Wix'    },
+                { key: 'wayfair',       label: '🏠 Wayfair' },
+                { key: 'treasuremarts', label: '💎 TM'     },
             ];
 
             const fmtD = (v) => v != null ? '$' + parseFloat(v).toFixed(2) : '---';
@@ -1446,18 +1462,16 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                 const profit = item.channelNetProfit?.[ch.key] ?? null;
                 const margin = item.channelMargins?.[ch.key]   ?? null;
 
-                const priceStr  = fmtD(price);
-                const profitStr = fmtD(profit);
-                const marginStr = fmtP(margin);
+                const priceClass  = price  == null ? 'fin-null' : '';
+                const profitClass = profit == null ? 'fin-null' : (profit >= 0 ? 'fin-pos' : 'fin-neg');
+                const marginClass = margin == null ? 'fin-null' : '';
 
-                const profitClass = profit == null ? 'financial-val null-val' : (profit >= 0 ? 'financial-val profit-pos' : 'financial-val profit-neg');
-
-                rows += `<div style="display:contents;">
-                    <div class="financial-ch-label">${ch.label}</div>
-                    <div class="financial-val ${price == null ? 'null-val' : ''}" style="text-align:right;">${priceStr}</div>
-                    <div class="${profitClass}" style="text-align:right;">${profitStr}</div>
-                    <div class="financial-val ${margin == null ? 'null-val' : ''}" style="text-align:right;">${marginStr}</div>
-                </div>`;
+                rows += `<tr>
+                    <td>${ch.label}</td>
+                    <td class="${priceClass}">${fmtD(price)}</td>
+                    <td class="${profitClass}">${fmtD(profit)}</td>
+                    <td class="${marginClass}">${fmtP(margin)}</td>
+                </tr>`;
             }
             document.getElementById('itemFinancialRows').innerHTML = rows;
 
