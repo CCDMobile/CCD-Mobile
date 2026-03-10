@@ -1,14 +1,14 @@
 <!DOCTYPE html>
 <!--
 ================================================================================
-CCD MOBILE INVENTORY MODULE v3.3 - Supabase Edition  
+CCD MOBILE INVENTORY MODULE v4.0-Supabase
 ================================================================================
-Supabase-first mobile inventory management. Real-time sync with shared database.
-v3.1: Added user-controlled inventory sort bar
-v3.2: Channel filter pills, Low-stock toggle, Add new item, Sales history,
-      Offline indicator banner
-v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
-      handling with rollback, activity_log entry written on every audit save
+Pure display terminal backed by Supabase. Desktop CCD-INVENTORY-SYSTEM.html
+is the ONLY calculation engine. Mobile reads stored values — never calculates
+prices, profit, margin, or cost.
+v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
+      functions removed, offline queue replay engine implemented, CrazyChicks
+      hidden (data layer kept), itemToSbRow minimal write-back only.
 ================================================================================
 -->
 <html lang="en">
@@ -16,7 +16,7 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>CCD Mobile Inventory</title>
-    
+
     <!-- PWA Support -->
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -25,10 +25,10 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
     <meta name="theme-color" content="#6366F1">
     <link rel="manifest" href="manifest.json">
     <link rel="apple-touch-icon" href="CCD-iPhone-Icon.png">
-    
+
     <!-- Supabase CDN -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-    
+
     <style>
         :root {
             --primary: #4F46E5;
@@ -150,6 +150,7 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
         .channel-label { color: var(--text-light); text-align: left; }
         .channel-qty { font-weight: 600; text-align: right; padding-right: 4px; }
         .channel-price { color: var(--success); font-weight: 500; font-size: 13px; text-align: right; }
+        .channel-price.null-price { color: var(--text-light); font-style: italic; }
         .modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 200; padding: 10px; }
         .modal.active { display: flex; }
         .modal-content { background: var(--card-bg); border-radius: 16px; width: 100%; max-width: 500px; max-height: 90vh; overflow-y: auto; box-shadow: 0 10px 40px rgba(0,0,0,0.3); }
@@ -162,6 +163,9 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
         .form-input { width: 100%; padding: 10px 12px; border: 2px solid var(--border); border-radius: 10px; font-size: 16px; outline: none; min-width: 0; }
         .form-input:focus { border-color: var(--primary); }
         .form-input:disabled { background: var(--bg); color: var(--text-light); }
+        .form-input[readonly] { background: var(--bg); color: var(--text-light); cursor: default; border-color: var(--border); }
+        .form-input[readonly]:focus { border-color: var(--border); }
+        .readonly-badge { font-size: 10px; font-weight: 600; color: var(--text-light); background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; margin-left: 6px; text-transform: uppercase; letter-spacing: 0.3px; vertical-align: middle; }
         .channel-inputs { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
         @media (max-width: 380px) { .channel-inputs { grid-template-columns: 1fr; gap: 8px; } }
         .channel-input-group { display: flex; flex-direction: column; gap: 4px; }
@@ -324,6 +328,55 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
         .badge-wayfair    { background: #FEF9C3; color: #854D0E; }
         .badge-treasuremarts { background: #DCFCE7; color: #14532D; }
         .badge-other      { background: var(--bg); color: var(--text-light); }
+
+        /* ── FINANCIAL DISPLAY PANEL ── */
+        .financial-panel {
+            background: #F9FAFB;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 12px;
+            margin-bottom: 20px;
+        }
+        .financial-panel-title {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-light);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 10px;
+        }
+        .financial-grid {
+            display: grid;
+            grid-template-columns: 90px 1fr 1fr 1fr;
+            gap: 4px;
+            font-size: 12px;
+        }
+        .financial-grid-header {
+            font-size: 10px;
+            font-weight: 600;
+            color: var(--text-light);
+            padding-bottom: 4px;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 2px;
+        }
+        .financial-grid-row { display: contents; }
+        .financial-ch-label { color: var(--text-light); padding: 3px 0; }
+        .financial-val { text-align: right; padding: 3px 4px; font-weight: 500; }
+        .financial-val.null-val { color: var(--text-light); font-style: italic; }
+        .financial-val.profit-pos { color: var(--success); }
+        .financial-val.profit-neg { color: var(--danger); }
+        .financial-footer {
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid var(--border);
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 6px;
+            font-size: 12px;
+        }
+        .financial-footer-item { display: flex; justify-content: space-between; align-items: center; }
+        .financial-footer-label { color: var(--text-light); }
+        .financial-footer-val { font-weight: 600; }
     </style>
 </head>
 <body>
@@ -402,7 +455,7 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
             </button>
         </div>
 
-        <!-- ── CHANNEL FILTER BAR ── -->
+        <!-- ── CHANNEL FILTER BAR ── (CrazyChicks intentionally absent — retired channel) -->
         <div class="filter-bar" id="filterBar">
             <span class="filter-label">Filter:</span>
             <button class="filter-pill active" id="fpAll"           onclick="setChannelFilter('all')">All</button>
@@ -411,7 +464,7 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
             <button class="filter-pill"        id="fpWayfair"       onclick="setChannelFilter('wayfair')">🏠 Wayfair</button>
             <button class="filter-pill"        id="fpTreasureMarts" onclick="setChannelFilter('treasuremarts')">💎 TM</button>
             <div class="filter-divider"></div>
-            <button class="filter-pill low-stock" id="fpLowStock"  onclick="toggleLowStock()">⚠️ Low/Zero</button>
+            <button class="filter-pill low-stock" id="fpLowStock"   onclick="toggleLowStock()">⚠️ Low/Zero</button>
         </div>
 
         <div class="stats">
@@ -430,12 +483,12 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
             <div class="modal-header"><div class="modal-title">Edit Item</div><button class="modal-close" onclick="closeItemModal()">×</button></div>
             <div class="modal-body">
                 <div class="form-group"><label class="form-label">Product Name</label><input type="text" class="form-input" id="editProductName"></div>
-                <div class="form-group"><label class="form-label">SKU</label><input type="text" class="form-input" id="editSku"></div>
+                <div class="form-group"><label class="form-label">SKU <span class="readonly-badge">Read Only</span></label><input type="text" class="form-input" id="editSku" readonly></div>
                 <div class="form-group"><label class="form-label">Brand</label><input type="text" class="form-input" id="editBrand"></div>
-                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;">
-                    <div class="form-group" style="margin-bottom: 0;"><label class="form-label">Warehouse</label><input type="number" class="form-input" id="editQty" min="0" style="font-weight: 600; font-size: 18px;"></div>
-                    <div class="form-group" style="margin-bottom: 0;"><label class="form-label">Wholesale $</label><input type="number" class="form-input" id="editWholesalePrice" min="0" step="0.01"></div>
-                    <div class="form-group" style="margin-bottom: 0;"><label class="form-label">Retail $</label><input type="number" class="form-input" id="editRetailPrice" min="0" step="0.01"></div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 20px;">
+                    <div><label class="form-label">Warehouse</label><input type="number" class="form-input" id="editQty" min="0" style="font-weight: 600; font-size: 18px;"></div>
+                    <div><label class="form-label">Wholesale $ <span class="readonly-badge">RO</span></label><input type="number" class="form-input" id="editWholesalePrice" min="0" step="0.01" readonly></div>
+                    <div><label class="form-label">Retail $ <span class="readonly-badge">RO</span></label><input type="number" class="form-input" id="editRetailPrice" min="0" step="0.01" readonly></div>
                 </div>
                 <div class="form-group">
                     <label class="form-label">Channel Allocation</label>
@@ -447,6 +500,30 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
                     </div>
                     <div class="total-qty-display"><div style="font-size: 13px;">Allocated: <span id="totalQtyDisplay" style="font-weight: 600;">0</span></div></div>
                 </div>
+                <div class="form-group"><label class="form-label">Comments</label><input type="text" class="form-input" id="editComments" placeholder="Add notes about this item..."></div>
+
+                <!-- Stored Financial Data (read-only, written by desktop) -->
+                <div class="financial-panel">
+                    <div class="financial-panel-title">📊 Stored Financials (Desktop)</div>
+                    <div class="financial-grid">
+                        <div class="financial-grid-header"></div>
+                        <div class="financial-grid-header" style="text-align:right;">Price</div>
+                        <div class="financial-grid-header" style="text-align:right;">Net Profit</div>
+                        <div class="financial-grid-header" style="text-align:right;">Margin</div>
+                        <div id="itemFinancialRows"></div>
+                    </div>
+                    <div class="financial-footer">
+                        <div class="financial-footer-item">
+                            <span class="financial-footer-label">Cost Basis:</span>
+                            <span class="financial-footer-val" id="itemCostBasis">---</span>
+                        </div>
+                        <div class="financial-footer-item">
+                            <span class="financial-footer-label">Last Sold:</span>
+                            <span class="financial-footer-val" id="itemLastSold">---</span>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="button-group">
                     <button class="btn btn-danger" onclick="markAsSold()">Mark as Sold</button>
                     <button class="btn btn-primary" onclick="saveItem()">Save Changes</button>
@@ -492,7 +569,7 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
                 </div>
                 <div class="settings-section">
                     <div class="settings-section-title">Version</div>
-                    <div class="settings-item"><div class="settings-item-label">App Version</div><div class="settings-item-value">v3.3 Supabase</div></div>
+                    <div class="settings-item"><div class="settings-item-label">App Version</div><div class="settings-item-value">v4.0 Supabase</div></div>
                 </div>
             </div>
         </div>
@@ -503,7 +580,7 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
         <div class="modal-content">
             <div class="modal-header"><div class="modal-title">Activity Log</div><button class="modal-close" onclick="closeLogModal()">×</button></div>
             <div class="modal-body">
-                <div class="log-content" id="logContent"></div>
+                <div class="log-content" id="logContent">Loading...</div>
                 <div class="log-actions"><button class="btn btn-primary btn-full" onclick="copyLog()">📋 Copy to Clipboard</button></div>
             </div>
         </div>
@@ -540,7 +617,7 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
             </div>
         </div>
     </div>
-    
+
     <!-- Missing Items Report Modal -->
     <div class="modal" id="missingItemsModal" onclick="closeMissingItemsModalOutside(event)">
         <div class="modal-content" style="max-width: 500px;">
@@ -567,7 +644,14 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
             <div class="modal-header"><div class="modal-title">Record Sale</div><button class="modal-close" onclick="closeSaleModal()">×</button></div>
             <div class="modal-body">
                 <div class="sale-info-box"><div class="sale-info-title" id="saleItemName">Product Name</div><div class="sale-info-sku" id="saleItemSku">SKU: 00000</div></div>
-                <div class="form-group"><label class="form-label">Channel Sold From</label><select class="sale-channel-select" id="saleChannel" onchange="updateSalePrice()"><option value="etsy">Etsy</option><option value="wix">Wix</option><option value="wayfair">Wayfair</option><option value="treasuremarts">TreasureMarts</option></select></div>
+                <div class="form-group"><label class="form-label">Channel Sold From</label>
+                    <select class="sale-channel-select" id="saleChannel" onchange="updateSalePrice()">
+                        <option value="etsy">Etsy</option>
+                        <option value="wix">Wix</option>
+                        <option value="wayfair">Wayfair</option>
+                        <option value="treasuremarts">TreasureMarts</option>
+                    </select>
+                </div>
                 <div class="sale-form-row">
                     <div class="form-group"><label class="form-label">Quantity Sold</label><input type="number" class="form-input" id="saleQty" min="1" value="1"></div>
                     <div class="form-group"><label class="form-label">Sale Price ($)</label><input type="number" class="form-input" id="salePrice" min="0" step="0.01" placeholder="0.00"></div>
@@ -590,10 +674,9 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
                 <div class="form-group"><label class="form-label">Product Name *</label><input type="text" class="form-input" id="newProductName" placeholder="e.g. Rustic Barn Door Sign"></div>
                 <div class="form-group"><label class="form-label">SKU *</label><input type="text" class="form-input" id="newSku" placeholder="e.g. RBD-001" style="text-transform: uppercase;"></div>
                 <div class="form-group"><label class="form-label">Brand</label><input type="text" class="form-input" id="newBrand" placeholder="e.g. Country Charm"></div>
-                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 20px;">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 20px;">
                     <div><label class="form-label">Qty *</label><input type="number" class="form-input" id="newQty" min="0" value="1" style="font-weight: 600;"></div>
-                    <div><label class="form-label">Wholesale $</label><input type="number" class="form-input" id="newWholesale" min="0" step="0.01" placeholder="0.00"></div>
-                    <div><label class="form-label">Retail $</label><input type="number" class="form-input" id="newRetail" min="0" step="0.01" placeholder="0.00"></div>
+                    <div><label class="form-label">Shelf #</label><input type="text" class="form-input" id="newShelf" placeholder="e.g. A-12"></div>
                 </div>
                 <div class="form-group">
                     <label class="form-label">Channel Allocation</label>
@@ -605,7 +688,9 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
                     </div>
                     <div class="total-qty-display">Allocated: <span id="newItemTotalQty" style="font-weight: 600;">0</span></div>
                 </div>
-                <div class="form-group"><label class="form-label">Shelf #</label><input type="text" class="form-input" id="newShelf" placeholder="e.g. A-12"></div>
+                <div style="background: #FFF7ED; border: 1px solid #FED7AA; border-radius: 8px; padding: 10px; margin-bottom: 20px; font-size: 12px; color: #92400E;">
+                    💡 Wholesale, retail, and pricing will be set by the desktop after saving.
+                </div>
                 <div class="button-group">
                     <button class="btn btn-secondary" onclick="closeAddItemModal()">Cancel</button>
                     <button class="btn btn-primary" onclick="saveNewItem()">💾 Save Item</button>
@@ -657,103 +742,60 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
 
     <script>
         // ============================================================================
-        // CCD MOBILE v3.2 — SUPABASE EDITION
+        // CCD MOBILE v4.0 — SUPABASE EDITION
+        // Pure display terminal. Desktop is the calculation engine.
+        // Mobile reads stored values. Mobile never calculates prices.
         // ============================================================================
-        
+
         const CORRECT_PIN = '1234';
-        const CRAZY_CHICKS_RENT = 200;
-        const TREASURE_MARTS_RENT = 250;
-        let globalSurcharge = 7.0;
-        let etsyOHFee = 10.0;
-        let wixOHFee = 10.0;
-        let wayfairOHFee = 10.0;
-        const treasureMartsRentFee = 10.0;
-        
-        // ============================================================================
-        // CHANNEL PRICE CALCULATION (Matches Desktop System)
-        // ============================================================================
-        
-        function calculateChannelPrice(item, channel) {
-            const wholesale = parseFloat(item.wholesalePrice) || 0;
-            const ibPercent = parseFloat(item.ibShipping) || 0;
-            const ib = wholesale * (ibPercent / 100);
-            const tariff = parseFloat(item.tariff) || 0;
-            const ob = parseFloat(item.obShipping) || 0;
-            let retailPrice = 0;
-            
-            if (channel === 'etsy') {
-                const overheadFee = (wholesale + ib + tariff + ob) * (etsyOHFee / 100);
-                const surcharge = ob * (globalSurcharge / 100);
-                retailPrice = wholesale * 2 + ib + tariff + ob + overheadFee + surcharge;
-            } else if (channel === 'wix') {
-                const overheadFee = (wholesale + ib + tariff + ob) * (wixOHFee / 100);
-                const surcharge = ob * (globalSurcharge / 100);
-                retailPrice = wholesale * 2 + ib + tariff + ob + overheadFee + surcharge;
-            } else if (channel === 'wayfair') {
-                const base = wholesale * 2;
-                const recoveryFee = base * 0.04;
-                const overheadFee = (wholesale + ib + tariff) * (wayfairOHFee / 100);
-                retailPrice = base + ib + tariff + recoveryFee + overheadFee;
-            } else if (channel === 'treasuremarts') {
-                if (item.coopPrice && item.coopPrice > 0) {
-                    retailPrice = item.coopPrice;
-                } else {
-                    const basePrice = wholesale * 2;
-                    const commission = basePrice * 0.10;
-                    const baseRetail = basePrice + ib + tariff + commission;
-                    retailPrice = baseRetail / (1 - (treasureMartsRentFee / 100));
-                }
-            }
-            const adjustment = (item.channelPriceAdjustments && item.channelPriceAdjustments[channel]) || 0;
-            return retailPrice + adjustment;
-        }
-        
+
         // ============================================================================
         // STATE
         // ============================================================================
-        
+
         let pinInput = '';
         let inventory = [];
         let filteredInventory = [];
-        let salesHistory = [];
         let currentItem = null;
         let lastSyncTime = null;
-        let autoSaveEnabled = false;
-        let lastSaveTime = null;
-        let activityLog = [];
         let offlineQueue = [];
         let isConnected = false;
-        const SAVE_COOLDOWN_MS = 15000;
+        let salesHistoryCache = [];
 
-        // ── SORT STATE ──────────────────────────────────────────────────────────────
-        // field: 'brand' | 'product' | 'sku' | 'qty' | 'price'
-        // dir:   'asc' | 'desc'
-        // Default directions per field (natural intuitive defaults)
+        // ── SORT STATE ───────────────────────────────────────────────────────────────
         const SORT_DEFAULT_DIR = { brand: 'asc', product: 'asc', sku: 'asc', qty: 'desc', price: 'desc' };
         let currentSort = { field: 'brand', dir: 'asc' };
 
         // ── FILTER STATE ─────────────────────────────────────────────────────────────
-        let channelFilter = 'all';   // 'all' | 'etsy' | 'wix' | 'wayfair' | 'treasuremarts'
-        let showLowStock  = false;   // true = only items with qty=0 or qty < minParLevel
-        let salesHistoryCache = [];  // cached results from Supabase
-        // ────────────────────────────────────────────────────────────────────────────
-        
-        // Supabase
-        let sbClient = null;
+        let channelFilter = 'all';
+        let showLowStock  = false;
+
+        // ── SUPABASE ─────────────────────────────────────────────────────────────────
+        let sbClient    = null;
         let sbConnected = false;
-        
+
+        // ============================================================================
+        // DISPLAY HELPER — reads stored price, never calculates
+        // ============================================================================
+
+        function getChannelPrice(item, channel) {
+            // Returns stored price from desktop, or null if not yet populated.
+            // Mobile NEVER calculates a price — it displays what the desktop stored.
+            const prices = item.channelPrices || {};
+            const price  = prices[channel];
+            return (price != null && price > 0) ? price : null;
+        }
+
         // ============================================================================
         // SORT BAR
         // ============================================================================
 
         function setSort(field) {
             if (currentSort.field === field) {
-                // Same field: flip direction
                 currentSort.dir = currentSort.dir === 'asc' ? 'desc' : 'asc';
             } else {
-                // New field: use default direction for that field
                 currentSort.field = field;
-                currentSort.dir = SORT_DEFAULT_DIR[field] || 'asc';
+                currentSort.dir   = SORT_DEFAULT_DIR[field] || 'asc';
             }
             updateSortUI();
             applyFilters();
@@ -762,17 +804,14 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
         function updateSortUI() {
             const fields = ['brand', 'product', 'sku', 'qty', 'price'];
             fields.forEach(f => {
-                const btn = document.getElementById('sortBtn-' + f);
+                const btn   = document.getElementById('sortBtn-' + f);
                 const arrow = document.getElementById('sortArrow-' + f);
                 if (!btn || !arrow) return;
                 const isActive = currentSort.field === f;
                 btn.classList.toggle('active', isActive);
-                if (isActive) {
-                    arrow.textContent = currentSort.dir === 'asc' ? '▲' : '▼';
-                } else {
-                    // Show default direction hint when inactive
-                    arrow.textContent = SORT_DEFAULT_DIR[f] === 'asc' ? '▲' : '▼';
-                }
+                arrow.textContent = isActive
+                    ? (currentSort.dir === 'asc' ? '▲' : '▼')
+                    : (SORT_DEFAULT_DIR[f] === 'asc' ? '▲' : '▼');
             });
         }
 
@@ -795,12 +834,10 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
                         vb = (b.sku || '').toLowerCase();
                         return mul * (va < vb ? -1 : va > vb ? 1 : 0);
                     case 'qty':
-                        va = getTotalQty(a);
-                        vb = getTotalQty(b);
-                        return mul * (va - vb);
+                        return mul * (getTotalQty(a) - getTotalQty(b));
                     case 'price':
-                        va = parseFloat(a.retailPrice) || 0;
-                        vb = parseFloat(b.retailPrice) || 0;
+                        va = a.retailPrice != null ? parseFloat(a.retailPrice) : -1;
+                        vb = b.retailPrice != null ? parseFloat(b.retailPrice) : -1;
                         return mul * (va - vb);
                     default:
                         return 0;
@@ -814,9 +851,8 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
 
         function setChannelFilter(ch) {
             channelFilter = ch;
-            const pills = ['All','Etsy','Wix','Wayfair','TreasureMarts'];
-            const ids   = ['fpAll','fpEtsy','fpWix','fpWayfair','fpTreasureMarts'];
-            const vals  = ['all','etsy','wix','wayfair','treasuremarts'];
+            const ids  = ['fpAll','fpEtsy','fpWix','fpWayfair','fpTreasureMarts'];
+            const vals = ['all','etsy','wix','wayfair','treasuremarts'];
             ids.forEach((id, i) => {
                 const el = document.getElementById(id);
                 if (el) el.classList.toggle('active', vals[i] === ch);
@@ -841,7 +877,11 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
             const offline = !navigator.onLine || !isConnected;
             banner.classList.toggle('visible', offline);
         }
-        
+
+        // ============================================================================
+        // SUPABASE — CREDENTIALS
+        // ============================================================================
+
         function getSbCredentials() {
             let url = localStorage.getItem('ccd_supabase_url') || '';
             let key = localStorage.getItem('ccd_supabase_key') || '';
@@ -853,18 +893,22 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
             }
             return { url, key };
         }
-        
+
         function saveSbCredentials(url, key) {
             localStorage.setItem('ccd_supabase_url', url);
             localStorage.setItem('ccd_supabase_key', key);
         }
-        
+
+        // ============================================================================
+        // SUPABASE — CONNECT / DISCONNECT
+        // ============================================================================
+
         async function connectSupabase() {
             const urlInput = document.getElementById('sbUrlInput');
             const keyInput = document.getElementById('sbKeyInput');
             let url = urlInput?.value?.trim() || '';
             let key = keyInput?.value?.trim() || '';
-            
+
             if (url) {
                 url = url.replace(/<[^>]*>/g, '').replace(/\s+/g, '').trim();
                 const m = url.match(/(https?:\/\/[a-z0-9-]+\.supabase\.co)\/?/i);
@@ -872,30 +916,39 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
                 url = url.replace(/\/+$/, '');
                 if (urlInput) urlInput.value = url;
             }
-            
+
             if (!url || !key) { showToast('Enter Supabase URL and key', 'error'); return false; }
-            
+
             try {
                 updateSyncStatus('Connecting...', true);
                 sbClient = window.supabase.createClient(url, key);
-                
-                const { count, error } = await sbClient.from('items').select('*', { count: 'exact', head: true });
+
+                const { error } = await sbClient.from('items').select('*', { count: 'exact', head: true });
                 if (error) throw error;
-                
+
                 await loadFromSupabase();
-                await loadSettingsFromSupabase();
-                
+                // NOTE: loadSettingsFromSupabase() intentionally removed — mobile v4.0
+                // has no formula variables to configure.
+
                 sbConnected = true;
                 isConnected = true;
                 saveSbCredentials(url, key);
                 updateConnectionUI();
                 updateSyncStatus('Connected', false);
-                startAutoSync();
-                
+
+                // 30s auto-sync (inline — startAutoSync() removed as OneDrive legacy)
+                setInterval(async () => {
+                    if (sbConnected) {
+                        try { await loadFromSupabase(); } catch (e) {}
+                        if (offlineQueue.length > 0) syncOfflineQueue();
+                    }
+                }, 30000);
+
+                // Realtime subscription
                 sbClient.channel('mobile-items')
                     .on('postgres_changes', { event: '*', schema: 'public', table: 'items' }, handleRealtimeChange)
                     .subscribe();
-                
+
                 logActivity('SUPABASE_CONNECTED', { itemCount: inventory.length });
                 showToast('Connected! ' + inventory.length + ' items loaded', 'success');
                 return true;
@@ -907,7 +960,37 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
                 return false;
             }
         }
-        
+
+        function disconnectSupabase() {
+            sbClient = null; sbConnected = false; isConnected = false;
+            localStorage.removeItem('ccd_supabase_url');
+            localStorage.removeItem('ccd_supabase_key');
+            updateConnectionUI(); updateSyncStatus('Disconnected', false);
+            showToast('Disconnected', 'success');
+        }
+
+        function updateConnectionUI() {
+            const statusDiv  = document.getElementById('connectionStatus');
+            const statusText = document.getElementById('connectionStatusText');
+            const connectBtn = document.getElementById('connectBtn');
+            const disconnBtn = document.getElementById('disconnectBtn');
+            if (sbConnected) {
+                statusDiv.className = 'onedrive-status connected';
+                statusText.textContent = 'Connected (' + inventory.length + ' items)';
+                connectBtn.style.display = 'none';
+                disconnBtn.style.display = 'block';
+            } else {
+                statusDiv.className = 'onedrive-status disconnected';
+                statusText.textContent = 'Not Connected';
+                connectBtn.style.display = 'block';
+                disconnBtn.style.display = 'none';
+            }
+        }
+
+        // ============================================================================
+        // SUPABASE — DATA OPS
+        // ============================================================================
+
         function handleRealtimeChange(payload) {
             const { eventType, new: newRow, old: oldRow } = payload;
             if (eventType === 'UPDATE' && newRow) {
@@ -922,29 +1005,16 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
             }
             applyFilters(); updateStats();
         }
-        
+
         async function loadFromSupabase() {
             const { data, error } = await sbClient.from('items').select('*').order('sku');
             if (error) throw error;
             inventory = (data || []).map(sbRowToItem);
-            applyFilters(); updateStats(); saveToStorage();
+            applyFilters(); updateStats();
             lastSyncTime = new Date();
             localStorage.setItem('ccd_mobile_last_sync', lastSyncTime.toISOString());
         }
-        
-        async function loadSettingsFromSupabase() {
-            try {
-                const { data } = await sbClient.from('settings').select('*');
-                if (!data) return;
-                const s = {};
-                for (const row of data) s[row.key] = row.value;
-                if (s.surcharge) globalSurcharge = parseFloat(s.surcharge) || 7.0;
-                if (s.etsy_oh) etsyOHFee = parseFloat(s.etsy_oh) || 10.0;
-                if (s.wix_oh) wixOHFee = parseFloat(s.wix_oh) || 10.0;
-                if (s.wayfair_oh) wayfairOHFee = parseFloat(s.wayfair_oh) || 10.0;
-            } catch (e) { console.warn('Settings:', e.message); }
-        }
-        
+
         async function saveItemToSupabase(item) {
             if (!sbClient || !sbConnected) return false;
             try {
@@ -954,217 +1024,270 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
                 return true;
             } catch (e) { console.error('Save:', e); return false; }
         }
-        
+
+        // ============================================================================
+        // SUPABASE — RECORD SALE (spec Section 8.4)
+        // Uses stored cost basis. No recalculation. Writes price_source.
+        // ============================================================================
+
         async function recordSaleToSupabase(item, qty, channel, salePrice) {
             if (!sbClient || !sbConnected) return;
             try {
-                const ws = parseFloat(item.wholesalePrice) || 0;
-                const ibPct = parseFloat(item.ibShipping) || 0;
-                const tariff = parseFloat(item.tariff) || 0;
-                const ob = parseFloat(item.obShipping) || 0;
-                const totalCost = (ws * (1 + ibPct / 100) + tariff + ob) * qty;
-                const totalRev = salePrice * qty;
-                const { data: itemRow } = await sbClient.from('items').select('id').eq('sku', item.sku).single();
+                const storedPrice = getChannelPrice(item, channel);
+                const priceSource = storedPrice != null ? 'desktop_stored' : 'manual';
+
+                // Use stored cost basis if available, otherwise null
+                const unitCost   = item.totalCostBasis != null ? item.totalCostBasis : null;
+                const totalRev   = salePrice * qty;
+                const totalCost  = unitCost != null ? unitCost * qty : null;
+                const netProfit  = totalCost != null ? totalRev - totalCost : null;
+                const margin     = (netProfit != null && totalRev > 0) ? (netProfit / totalRev) : null;
+
+                const { data: itemRow } = await sbClient
+                    .from('items').select('id').eq('sku', item.sku).single();
+
                 await sbClient.from('sales_history').insert({
-                    item_id: itemRow?.id || null, sku: item.sku, product_name: item.productName || '',
-                    brand_name: item.brandName || '', qty_sold: qty, sale_channel: channel,
-                    sale_date: new Date().toISOString().split('T')[0], sale_price: salePrice,
-                    total_revenue: totalRev, total_cost: totalCost, net_profit: totalRev - totalCost,
-                    profit_margin: totalRev > 0 ? (totalRev - totalCost) / totalRev : 0,
-                    wholesale_price: ws, ib_shipping: ibPct, tariff: tariff, ob_shipping: ob,
-                    notes: 'Mobile sale via ' + channel
+                    item_id:        itemRow?.id || null,
+                    sku:            item.sku,
+                    product_name:   item.productName || '',
+                    brand_name:     item.brandName   || '',
+                    qty_sold:       qty,
+                    sale_channel:   channel,
+                    sale_date:      new Date().toISOString().split('T')[0],
+                    sale_price:     salePrice,
+                    total_revenue:  totalRev,
+                    total_cost:     totalCost,
+                    net_profit:     netProfit,
+                    profit_margin:  margin,
+                    price_source:   priceSource,
+                    notes:          'Mobile sale via ' + channel,
                 });
+
+                // Update last_sold_date and last_sold_channel on the item
+                await sbClient.from('items').update({
+                    last_sold_date:    new Date().toISOString().split('T')[0],
+                    last_sold_channel: channel,
+                }).eq('sku', item.sku);
+
             } catch (e) { console.warn('Sale record:', e.message); }
         }
-        
+
         async function logActivityToSupabase(action, details) {
             if (!sbClient || !sbConnected) return;
             try {
                 await sbClient.from('activity_log').insert({
-                    category: 'mobile', action: action, channel: 'system',
-                    summary: action, details: typeof details === 'object' ? details : { info: details },
-                    device: 'Mobile-v3.2', user_name: 'Mobile'
+                    category:  'mobile',
+                    action:    action,
+                    channel:   'system',
+                    summary:   action,
+                    details:   typeof details === 'object' ? details : { info: details },
+                    device:    'Mobile-v4.0',
+                    user_name: 'Mobile'
                 });
             } catch (e) { /* silent */ }
         }
-        
-        function disconnectSupabase() {
-            sbClient = null; sbConnected = false; isConnected = false; autoSaveEnabled = false;
-            localStorage.removeItem('ccd_supabase_url');
-            localStorage.removeItem('ccd_supabase_key');
-            updateConnectionUI(); updateSyncStatus('Disconnected', false);
-            showToast('Disconnected', 'success');
-        }
-        
-        function updateConnectionUI() {
-            const statusDiv = document.getElementById('connectionStatus');
-            const statusText = document.getElementById('connectionStatusText');
-            const connectBtn = document.getElementById('connectBtn');
-            const disconnectBtn = document.getElementById('disconnectBtn');
-            if (sbConnected) {
-                statusDiv.className = 'onedrive-status connected';
-                statusText.textContent = 'Connected (' + inventory.length + ' items)';
-                connectBtn.style.display = 'none';
-                disconnectBtn.style.display = 'block';
-            } else {
-                statusDiv.className = 'onedrive-status disconnected';
-                statusText.textContent = 'Not Connected';
-                connectBtn.style.display = 'block';
-                disconnectBtn.style.display = 'none';
-            }
-        }
-        
-        // ============================================================================
-        // DATA CONVERTERS
-        // ============================================================================
-        
-        function sbRowToItem(row) {
-            return {
-                id: row.id, sku: row.sku, productName: row.product_name, brandName: row.brand_name,
-                category: row.category, vendor: row.vendor, shelfNumber: row.shelf_number,
-                qty: row.qty || 0, isActive: row.is_active, comments: row.comments,
-                wholesalePrice: row.wholesale_price != null ? parseFloat(row.wholesale_price) : 0,
-                ibShipping: row.ib_shipping != null ? parseFloat(row.ib_shipping) : 0,
-                tariff: row.tariff != null ? parseFloat(row.tariff) : 0,
-                retailPrice: row.retail_price != null ? parseFloat(row.retail_price) : 0,
-                coopPrice: row.coop_price != null ? parseFloat(row.coop_price) : null,
-                obShipping: row.ob_shipping != null ? parseFloat(row.ob_shipping) : 0,
-                channels: {
-                    etsy: row.etsy_qty || 0, wix: row.wix_qty || 0, wayfair: row.wayfair_qty || 0,
-                    crazychicks: row.crazychicks_qty || 0, treasuremarts: row.treasuremarts_qty || 0
-                },
-                channelPriceAdjustments: {
-                    etsy: row.etsy_price_adj != null ? parseFloat(row.etsy_price_adj) : 0,
-                    wix: row.wix_price_adj != null ? parseFloat(row.wix_price_adj) : 0,
-                    wayfair: row.wayfair_price_adj != null ? parseFloat(row.wayfair_price_adj) : 0,
-                    crazychicks: row.crazychicks_price_adj != null ? parseFloat(row.crazychicks_price_adj) : 0,
-                    treasuremarts: row.treasuremarts_price_adj != null ? parseFloat(row.treasuremarts_price_adj) : 0
-                },
-                channelParEnabled: row.channel_par_enabled || false, channelParMin: row.channel_par_min || 0,
-                minParLevel: row.min_par_level || 0, maxParLevel: row.max_par_level || 0,
-            };
-        }
-        
-        function itemToSbRow(item) {
-            return {
-                sku: item.sku, product_name: item.productName || '', brand_name: item.brandName || '',
-                category: item.category || '', vendor: item.vendor || '', shelf_number: item.shelfNumber || '',
-                qty: parseInt(item.qty) || 0, is_active: item.isActive !== false,
-                wholesale_price: parseFloat(item.wholesalePrice) || 0,
-                ib_shipping: parseFloat(item.ibShipping) || 0, tariff: parseFloat(item.tariff) || 0,
-                retail_price: parseFloat(item.retailPrice) || 0,
-                coop_price: item.coopPrice != null ? parseFloat(item.coopPrice) : null,
-                ob_shipping: parseFloat(item.obShipping) || 0,
-                etsy_qty: parseInt(item.channels?.etsy) || 0, wix_qty: parseInt(item.channels?.wix) || 0,
-                wayfair_qty: parseInt(item.channels?.wayfair) || 0, crazychicks_qty: parseInt(item.channels?.crazychicks) || 0,
-                treasuremarts_qty: parseInt(item.channels?.treasuremarts) || 0,
-                etsy_price_adj: parseFloat(item.channelPriceAdjustments?.etsy) || 0,
-                wix_price_adj: parseFloat(item.channelPriceAdjustments?.wix) || 0,
-                wayfair_price_adj: parseFloat(item.channelPriceAdjustments?.wayfair) || 0,
-                crazychicks_price_adj: parseFloat(item.channelPriceAdjustments?.crazychicks) || 0,
-                treasuremarts_price_adj: parseFloat(item.channelPriceAdjustments?.treasuremarts) || 0,
-            };
-        }
-        
-        // ============================================================================
-        // SAVE/SYNC (Supabase-backed)
-        // ============================================================================
-        
-        async function saveInventoryToOneDrive() {
-            if (!sbClient || !sbConnected) {
-                addToOfflineQueue({ type: 'full_save' });
-                return false;
-            }
-            try {
-                updateSyncStatus('Saving...', true);
-                if (currentItem) await saveItemToSupabase(currentItem);
-                updateSyncStatus('Synced', false);
-                lastSyncTime = new Date(); lastSaveTime = Date.now();
-                localStorage.setItem('ccd_mobile_last_sync', lastSyncTime.toISOString());
-                saveToStorage();
-                return true;
-            } catch (err) {
-                updateSyncStatus('Save failed', false);
-                showToast('Save failed: ' + err.message, 'error');
-                return false;
-            }
-        }
-        
-        async function loadInventoryFromOneDrive() {
-            if (!sbClient || !sbConnected) return;
-            try {
-                updateSyncStatus('Syncing...', true);
-                await loadFromSupabase();
-                updateSyncStatus('Synced', false);
-                if (offlineQueue.length > 0) setTimeout(syncOfflineQueue, 1000);
-            } catch (err) { updateSyncStatus('Sync failed', false); }
-        }
-        
-        function startAutoSync() {
-            autoSaveEnabled = true;
-            setInterval(async () => {
-                if (autoSaveEnabled && sbConnected) {
-                    if (lastSaveTime && (Date.now() - lastSaveTime) < SAVE_COOLDOWN_MS) return;
-                    await loadInventoryFromOneDrive();
-                }
-            }, 30000);
-        }
-        
+
         function updateSyncStatus(message, isSyncing) {
             const st = document.getElementById('syncText');
             const sd = document.getElementById('syncDot');
             if (st) st.textContent = message;
             if (sd) {
-                if (isSyncing) sd.className = 'sync-dot syncing';
-                else if (message.includes('fail')) sd.className = 'sync-dot error';
-                else if (isConnected) sd.className = 'sync-dot';
-                else sd.className = 'sync-dot error';
+                if (isSyncing)               sd.className = 'sync-dot syncing';
+                else if (message.includes('fail') || message.includes('Disconnect')) sd.className = 'sync-dot error';
+                else if (isConnected)        sd.className = 'sync-dot';
+                else                         sd.className = 'sync-dot error';
             }
             updateOfflineBanner();
         }
-        
+
         // ============================================================================
-        // ACTIVITY LOGGING
+        // DATA CONVERTERS
         // ============================================================================
-        
+
+        // sbRowToItem — complete null-safe version (spec Section 8.1)
+        function sbRowToItem(row) {
+            return {
+                // ── Identity ──────────────────────────────────────────────────────────
+                id:          row.id,
+                sku:         row.sku,
+                productName: row.product_name || '',
+                brandName:   row.brand_name   || '',
+                category:    row.category     || '',
+                vendor:      row.vendor       || '',
+                shelfNumber: row.shelf_number || '',
+                comments:    row.comments     || '',
+                isActive:    row.is_active !== false,
+
+                // ── Quantities ────────────────────────────────────────────────────────
+                qty: row.qty || 0,
+                channels: {
+                    etsy:          row.etsy_qty          || 0,
+                    wix:           row.wix_qty           || 0,
+                    wayfair:       row.wayfair_qty       || 0,
+                    crazychicks:   row.crazychicks_qty   || 0,   // data layer kept — hidden in UI
+                    treasuremarts: row.treasuremarts_qty || 0,
+                },
+
+                // ── Raw cost components (display only in item detail) ─────────────────
+                wholesalePrice: row.wholesale_price != null ? parseFloat(row.wholesale_price) : null,
+                ibShipping:     row.ib_shipping     != null ? parseFloat(row.ib_shipping)     : null,
+                tariff:         row.tariff          != null ? parseFloat(row.tariff)          : null,
+                obShipping:     row.ob_shipping     != null ? parseFloat(row.ob_shipping)     : null,
+                retailPrice:    row.retail_price    != null ? parseFloat(row.retail_price)    : null,
+                coopPrice:      row.coop_price      != null ? parseFloat(row.coop_price)      : null,
+
+                // ── Stored channel prices (written by desktop) ────────────────────────
+                channelPrices: {
+                    etsy:          row.etsy_price          != null ? parseFloat(row.etsy_price)          : null,
+                    wix:           row.wix_price           != null ? parseFloat(row.wix_price)           : null,
+                    wayfair:       row.wayfair_price       != null ? parseFloat(row.wayfair_price)       : null,
+                    crazychicks:   row.crazychicks_price   != null ? parseFloat(row.crazychicks_price)   : null,
+                    // NOTE: treasuremarts_price not tm_price — matches desktop column naming
+                    treasuremarts: row.treasuremarts_price != null ? parseFloat(row.treasuremarts_price) : null,
+                },
+
+                // ── Stored net profit per channel (written by desktop) ────────────────
+                channelNetProfit: {
+                    etsy:          row.etsy_net_profit     != null ? parseFloat(row.etsy_net_profit)     : null,
+                    wix:           row.wix_net_profit      != null ? parseFloat(row.wix_net_profit)      : null,
+                    wayfair:       row.wayfair_net_profit  != null ? parseFloat(row.wayfair_net_profit)  : null,
+                    crazychicks:   row.cc_net_profit       != null ? parseFloat(row.cc_net_profit)       : null,
+                    treasuremarts: row.tm_net_profit       != null ? parseFloat(row.tm_net_profit)       : null,
+                },
+
+                // ── Stored margin percentages (written by desktop) ────────────────────
+                channelMargins: {
+                    etsy:          row.etsy_margin_pct     != null ? parseFloat(row.etsy_margin_pct)     : null,
+                    wix:           row.wix_margin_pct      != null ? parseFloat(row.wix_margin_pct)      : null,
+                    wayfair:       row.wayfair_margin_pct  != null ? parseFloat(row.wayfair_margin_pct)  : null,
+                    crazychicks:   row.cc_margin_pct       != null ? parseFloat(row.cc_margin_pct)       : null,
+                    treasuremarts: row.tm_margin_pct       != null ? parseFloat(row.tm_margin_pct)       : null,
+                },
+
+                // ── Stored total cost basis ───────────────────────────────────────────
+                totalCostBasis: row.total_cost_basis != null ? parseFloat(row.total_cost_basis) : null,
+
+                // ── Channel price adjustments (overrides) ─────────────────────────────
+                channelPriceAdjustments: {
+                    etsy:          row.etsy_price_adj          != null ? parseFloat(row.etsy_price_adj)          : 0,
+                    wix:           row.wix_price_adj           != null ? parseFloat(row.wix_price_adj)           : 0,
+                    wayfair:       row.wayfair_price_adj       != null ? parseFloat(row.wayfair_price_adj)       : 0,
+                    crazychicks:   row.crazychicks_price_adj   != null ? parseFloat(row.crazychicks_price_adj)   : 0,
+                    treasuremarts: row.treasuremarts_price_adj != null ? parseFloat(row.treasuremarts_price_adj) : 0,
+                },
+
+                // ── PAR levels ────────────────────────────────────────────────────────
+                minParLevel:       row.min_par_level        || 0,
+                maxParLevel:       row.max_par_level        || 0,
+                channelParEnabled: row.channel_par_enabled  || false,
+                channelParMin:     row.channel_par_min      || 0,
+
+                // ── Last sold tracking ────────────────────────────────────────────────
+                lastSoldDate:    row.last_sold_date    || null,
+                lastSoldChannel: row.last_sold_channel || null,
+            };
+        }
+
+        // itemToSbRow — minimal write-back (spec Section 8.2)
+        // Mobile only writes fields it actually controls.
+        // wholesalePrice, retailPrice, SKU — locked read-only in UI, not written here.
+        // Financial columns (prices, profit, margin) — NEVER written by mobile.
+        function itemToSbRow(item) {
+            return {
+                sku:              item.sku,
+                product_name:     item.productName || '',
+                brand_name:       item.brandName   || '',
+                qty:              parseInt(item.qty) || 0,
+                etsy_qty:         parseInt(item.channels?.etsy)          || 0,
+                wix_qty:          parseInt(item.channels?.wix)           || 0,
+                wayfair_qty:      parseInt(item.channels?.wayfair)       || 0,
+                crazychicks_qty:  parseInt(item.channels?.crazychicks)   || 0,
+                treasuremarts_qty:parseInt(item.channels?.treasuremarts) || 0,
+                comments:         item.comments || '',
+            };
+        }
+
+        // ============================================================================
+        // ACTIVITY LOGGING (v4.0 — direct pass-through, no local array)
+        // ============================================================================
+
         function logActivity(action, details) {
-            const entry = { timestamp: new Date().toISOString(), action, details };
-            activityLog.push(entry);
-            if (activityLog.length > 100) activityLog = activityLog.slice(-100);
-            try { localStorage.setItem('ccd_mobile_activity_log', JSON.stringify(activityLog)); } catch (e) {}
             logActivityToSupabase(action, details);
         }
-        
-        function loadLogFromStorage() {
-            try { const s = localStorage.getItem('ccd_mobile_activity_log'); if (s) activityLog = JSON.parse(s); } catch (e) { activityLog = []; }
+
+        // ============================================================================
+        // OFFLINE QUEUE — complete redesign (spec Section 9)
+        // ============================================================================
+
+        function loadOfflineQueue() {
+            try { const s = localStorage.getItem('ccd_mobile_offline_queue'); if (s) offlineQueue = JSON.parse(s); } catch (e) { offlineQueue = []; }
         }
-        
-        // ============================================================================
-        // OFFLINE QUEUE
-        // ============================================================================
-        
-        function loadOfflineQueue() { try { const s = localStorage.getItem('ccd_mobile_offline_queue'); if (s) offlineQueue = JSON.parse(s); } catch (e) { offlineQueue = []; } }
-        function saveOfflineQueue() { try { localStorage.setItem('ccd_mobile_offline_queue', JSON.stringify(offlineQueue)); } catch (e) {} }
-        
-        function addToOfflineQueue(change) {
-            offlineQueue.push({ timestamp: new Date().toISOString(), change });
-            if (offlineQueue.length > 50) offlineQueue = offlineQueue.slice(-50);
+        function saveOfflineQueue() {
+            try { localStorage.setItem('ccd_mobile_offline_queue', JSON.stringify(offlineQueue)); } catch (e) {}
+        }
+
+        function addToOfflineQueue(type, payload) {
+            offlineQueue.push({
+                id:        Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+                timestamp: new Date().toISOString(),
+                type,
+                payload
+            });
+            if (offlineQueue.length > 100) offlineQueue = offlineQueue.slice(-100);
             saveOfflineQueue();
-            showToast('Saved offline - will sync when connected', 'warning');
         }
-        
+
+        // syncOfflineQueue — proper replay engine (spec Section 9.3)
         async function syncOfflineQueue() {
             if (offlineQueue.length === 0 || !sbConnected) return;
-            showToast('Syncing ' + offlineQueue.length + ' offline changes...', 'warning');
-            offlineQueue = [];
+            const total = offlineQueue.length;
+            showToast('Syncing ' + total + ' offline changes...', 'warning');
+            let succeeded = 0, failed = 0;
+            const remaining = [];
+
+            for (const entry of offlineQueue) {
+                try {
+                    if (entry.type === 'sale') {
+                        const { payload: p } = entry;
+                        const item = inventory.find(i => i.sku === p.sku);
+                        if (item) {
+                            await recordSaleToSupabase(item, p.qtySold, p.channel, p.salePrice);
+                            await saveItemToSupabase(item);
+                        }
+                    } else if (entry.type === 'item_update') {
+                        const { payload: p } = entry;
+                        const item = inventory.find(i => i.sku === p.sku);
+                        if (item) await saveItemToSupabase(item);
+                    } else if (entry.type === 'add_item') {
+                        await sbClient.from('items').insert(itemToSbRow(entry.payload));
+                    } else if (entry.type === 'audit_save') {
+                        const { payload: p } = entry;
+                        const item = inventory.find(i => i.sku === p.sku);
+                        if (item) await saveItemToSupabase(item);
+                    }
+                    succeeded++;
+                } catch (e) {
+                    console.warn('Queue replay failed:', entry.type, e.message);
+                    failed++;
+                    remaining.push(entry);
+                }
+            }
+
+            offlineQueue = remaining;
             saveOfflineQueue();
-            showToast('Offline queue cleared', 'success');
+            logActivity('OFFLINE_QUEUE_SYNCED', { total, succeeded, failed });
+
+            if (failed > 0) {
+                showToast('Synced ' + succeeded + '/' + total + ' — ' + failed + ' failed', 'warning');
+            } else {
+                showToast('✅ ' + succeeded + ' offline changes synced', 'success');
+            }
         }
-        
+
         // ============================================================================
         // PIN AUTHENTICATION
         // ============================================================================
-        
+
         function enterPin(digit) {
             if (pinInput.length < 4) { pinInput += digit; updatePinDots(); if (pinInput.length === 4) checkPin(); }
         }
@@ -1191,30 +1314,21 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
                 setTimeout(() => { updatePinDots(); document.getElementById('pinError').textContent = ''; }, 1000);
             }
         }
-        
+
         // ============================================================================
-        // INVENTORY MANAGEMENT
+        // INVENTORY — FILTER / RENDER / STATS
         // ============================================================================
-        
-        function loadFromStorage() {
-            const stored = localStorage.getItem('ccd_mobile_inventory');
-            if (stored) { try { inventory = JSON.parse(stored); applyFilters(); updateStats(); } catch (e) {} }
-        }
-        function saveToStorage() { try { localStorage.setItem('ccd_mobile_inventory', JSON.stringify(inventory)); } catch (e) {} }
-        
+
         function applyFilters() {
             const q = (document.getElementById('searchInput')?.value || '').toLowerCase();
-            // 1. Text search
-            let result = inventory.filter(item => !q || 
+            let result = inventory.filter(item => !q ||
                 (item.sku && item.sku.toLowerCase().includes(q)) ||
                 (item.productName && item.productName.toLowerCase().includes(q)) ||
                 (item.brandName && item.brandName.toLowerCase().includes(q))
             );
-            // 2. Channel filter
             if (channelFilter !== 'all') {
                 result = result.filter(item => (item.channels?.[channelFilter] || 0) > 0);
             }
-            // 3. Low / zero stock filter
             if (showLowStock) {
                 result = result.filter(item => {
                     const qty = getTotalQty(item);
@@ -1223,12 +1337,11 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
                     return false;
                 });
             }
-            // 4. Sort
             result = sortInventory(result);
             filteredInventory = result;
             renderInventoryList();
         }
-        
+
         function renderInventoryList() {
             const listDiv = document.getElementById('inventoryList');
             if (filteredInventory.length === 0) {
@@ -1237,191 +1350,273 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
             }
             listDiv.innerHTML = filteredInventory.map(item => {
                 const wQty = getTotalQty(item);
-                const ch = item.channels || {};
-                const ep = calculateChannelPrice(item, 'etsy');
-                const wp = calculateChannelPrice(item, 'wix');
-                const wfp = calculateChannelPrice(item, 'wayfair');
-                const tp = calculateChannelPrice(item, 'treasuremarts');
-                // Qty colour class
+                const ch   = item.channels || {};
+
+                // Use stored prices — null shows as ---
+                const ep  = getChannelPrice(item, 'etsy');
+                const wp  = getChannelPrice(item, 'wix');
+                const wfp = getChannelPrice(item, 'wayfair');
+                const tp  = getChannelPrice(item, 'treasuremarts');
+
+                const fmtPrice = (p) => p != null ? '$' + p.toFixed(2) : '---';
+                const priceClass = (p) => p != null ? 'channel-price' : 'channel-price null-price';
+
                 let qtyClass = 'item-qty';
                 if (wQty === 0) qtyClass += ' qty-zero';
                 else if (item.minParLevel > 0 && wQty < item.minParLevel) qtyClass += ' qty-low';
+
+                const retailDisplay = item.retailPrice != null ? '$' + parseFloat(item.retailPrice).toFixed(2) : '---';
+
                 return `<div class="inventory-item" onclick="openItemModal('${item.id}')">
-                    <div class="item-header"><div><div class="item-title">${item.productName || 'Unnamed'}</div>
-                    <div class="item-sku">SKU: ${item.sku || 'N/A'} | ${item.brandName || 'No Brand'} | OB: $${(parseFloat(item.obShipping) || 0).toFixed(2)}</div></div>
-                    <div class="${qtyClass}">${wQty}</div></div>
-                    <div class="item-details"><div class="detail-item"><span class="detail-label">Retail:</span><span class="detail-value">$${(parseFloat(item.retailPrice) || 0).toFixed(2)}</span></div>
-                    <div class="detail-item"><span class="detail-label">Shelf:</span><span class="detail-value">${item.shelfNumber || 'N/A'}</span></div></div>
+                    <div class="item-header">
+                        <div>
+                            <div class="item-title">${item.productName || 'Unnamed'}</div>
+                            <div class="item-sku">SKU: ${item.sku || 'N/A'} | ${item.brandName || 'No Brand'}</div>
+                        </div>
+                        <div class="${qtyClass}">${wQty}</div>
+                    </div>
+                    <div class="item-details">
+                        <div class="detail-item"><span class="detail-label">Retail:</span><span class="detail-value">${retailDisplay}</span></div>
+                        <div class="detail-item"><span class="detail-label">Shelf:</span><span class="detail-value">${item.shelfNumber || 'N/A'}</span></div>
+                    </div>
                     <div class="item-channels">
-                    <div class="channel-row"><span class="channel-label">Etsy:</span><span class="channel-qty">${ch.etsy || 0}</span><span class="channel-price">$${ep.toFixed(2)}</span></div>
-                    <div class="channel-row"><span class="channel-label">Wix:</span><span class="channel-qty">${ch.wix || 0}</span><span class="channel-price">$${wp.toFixed(2)}</span></div>
-                    <div class="channel-row"><span class="channel-label">Wayfair:</span><span class="channel-qty">${ch.wayfair || 0}</span><span class="channel-price">$${wfp.toFixed(2)}</span></div>
-                    <div class="channel-row"><span class="channel-label">TreasureMarts:</span><span class="channel-qty">${ch.treasuremarts || 0}</span><span class="channel-price">$${tp.toFixed(2)}</span></div>
-                    </div></div>`;
+                        <div class="channel-row"><span class="channel-label">Etsy:</span><span class="channel-qty">${ch.etsy || 0}</span><span class="${priceClass(ep)}">${fmtPrice(ep)}</span></div>
+                        <div class="channel-row"><span class="channel-label">Wix:</span><span class="channel-qty">${ch.wix || 0}</span><span class="${priceClass(wp)}">${fmtPrice(wp)}</span></div>
+                        <div class="channel-row"><span class="channel-label">Wayfair:</span><span class="channel-qty">${ch.wayfair || 0}</span><span class="${priceClass(wfp)}">${fmtPrice(wfp)}</span></div>
+                        <div class="channel-row"><span class="channel-label">TreasureMarts:</span><span class="channel-qty">${ch.treasuremarts || 0}</span><span class="${priceClass(tp)}">${fmtPrice(tp)}</span></div>
+                    </div>
+                </div>`;
             }).join('');
         }
-        
+
         function updateStats() {
             document.getElementById('statTotalItems').textContent = inventory.length;
-            document.getElementById('statTotalQty').textContent = inventory.reduce((sum, i) => sum + getTotalQty(i), 0);
+            document.getElementById('statTotalQty').textContent   = inventory.reduce((sum, i) => sum + getTotalQty(i), 0);
         }
+
         function getTotalQty(item) { return parseInt(item.qty) || 0; }
-        function getChannelAllocationsTotal(item) { const c = item.channels || {}; return (c.etsy||0)+(c.wix||0)+(c.wayfair||0)+(c.treasuremarts||0); }
-        
+
+        // ============================================================================
+        // ITEM MODAL
+        // ============================================================================
+
         function openItemModal(itemId) {
             currentItem = inventory.find(i => String(i.id) === String(itemId));
             if (!currentItem) { showToast('Item not found', 'error'); return; }
-            document.getElementById('editProductName').value = currentItem.productName || '';
-            document.getElementById('editSku').value = currentItem.sku || '';
-            document.getElementById('editBrand').value = currentItem.brandName || '';
-            document.getElementById('editQty').value = parseInt(currentItem.qty) || 0;
-            document.getElementById('editWholesalePrice').value = parseFloat(currentItem.wholesalePrice) || 0;
-            document.getElementById('editRetailPrice').value = parseFloat(currentItem.retailPrice) || 0;
+
+            document.getElementById('editProductName').value  = currentItem.productName || '';
+            document.getElementById('editSku').value          = currentItem.sku         || '';
+            document.getElementById('editBrand').value        = currentItem.brandName   || '';
+            document.getElementById('editQty').value          = parseInt(currentItem.qty) || 0;
+            document.getElementById('editComments').value     = currentItem.comments    || '';
+
+            // Read-only financial inputs — display only
+            const ws = currentItem.wholesalePrice;
+            const rp = currentItem.retailPrice;
+            document.getElementById('editWholesalePrice').value = ws != null ? parseFloat(ws).toFixed(2) : '';
+            document.getElementById('editRetailPrice').value    = rp != null ? parseFloat(rp).toFixed(2) : '';
+
             const ch = currentItem.channels || {};
-            document.getElementById('editEtsy').value = ch.etsy || 0;
-            document.getElementById('editWix').value = ch.wix || 0;
-            document.getElementById('editWayfair').value = ch.wayfair || 0;
+            document.getElementById('editEtsy').value          = ch.etsy          || 0;
+            document.getElementById('editWix').value           = ch.wix           || 0;
+            document.getElementById('editWayfair').value       = ch.wayfair       || 0;
             document.getElementById('editTreasureMarts').value = ch.treasuremarts || 0;
             updateTotalQty();
+
+            // Populate financial display panel
+            populateFinancialPanel(currentItem);
+
             document.getElementById('itemModal').classList.add('active');
         }
+
+        function populateFinancialPanel(item) {
+            const channels = [
+                { key: 'etsy',          label: '🏷 Etsy'  },
+                { key: 'wix',           label: '🌐 Wix'   },
+                { key: 'wayfair',       label: '🏠 Wayfair'},
+                { key: 'treasuremarts', label: '💎 TM'    },
+            ];
+
+            const fmtD = (v) => v != null ? '$' + parseFloat(v).toFixed(2) : '---';
+            const fmtP = (v) => v != null ? parseFloat(v).toFixed(1) + '%'  : '---';
+
+            let rows = '';
+            for (const ch of channels) {
+                const price  = item.channelPrices?.[ch.key]    ?? null;
+                const profit = item.channelNetProfit?.[ch.key] ?? null;
+                const margin = item.channelMargins?.[ch.key]   ?? null;
+
+                const priceStr  = fmtD(price);
+                const profitStr = fmtD(profit);
+                const marginStr = fmtP(margin);
+
+                const profitClass = profit == null ? 'financial-val null-val' : (profit >= 0 ? 'financial-val profit-pos' : 'financial-val profit-neg');
+
+                rows += `<div style="display:contents;">
+                    <div class="financial-ch-label">${ch.label}</div>
+                    <div class="financial-val ${price == null ? 'null-val' : ''}" style="text-align:right;">${priceStr}</div>
+                    <div class="${profitClass}" style="text-align:right;">${profitStr}</div>
+                    <div class="financial-val ${margin == null ? 'null-val' : ''}" style="text-align:right;">${marginStr}</div>
+                </div>`;
+            }
+            document.getElementById('itemFinancialRows').innerHTML = rows;
+
+            // Cost basis
+            const cb = item.totalCostBasis;
+            document.getElementById('itemCostBasis').textContent = cb != null ? '$' + parseFloat(cb).toFixed(2) : '---';
+
+            // Last sold
+            const ls = item.lastSoldDate;
+            const lc = item.lastSoldChannel;
+            if (ls) {
+                const dateStr = new Date(ls + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
+                document.getElementById('itemLastSold').textContent = lc ? dateStr + ' via ' + lc : dateStr;
+            } else {
+                document.getElementById('itemLastSold').textContent = 'Never sold';
+            }
+        }
+
         function closeItemModal() { document.getElementById('itemModal').classList.remove('active'); currentItem = null; }
         function closeItemModalOutside(e) { if (e.target === e.currentTarget) closeItemModal(); }
-        
+
         function updateTotalQty() {
-            const t = (parseInt(document.getElementById('editEtsy').value)||0) + (parseInt(document.getElementById('editWix').value)||0) +
-                      (parseInt(document.getElementById('editWayfair').value)||0) + (parseInt(document.getElementById('editTreasureMarts').value)||0);
+            const t = (parseInt(document.getElementById('editEtsy').value)||0)
+                    + (parseInt(document.getElementById('editWix').value)||0)
+                    + (parseInt(document.getElementById('editWayfair').value)||0)
+                    + (parseInt(document.getElementById('editTreasureMarts').value)||0);
             document.getElementById('totalQtyDisplay').textContent = t;
         }
-        
+
         async function saveItem() {
             if (!currentItem) return;
             const newQty = parseInt(document.getElementById('editQty').value) || 0;
             const alloc = {
-                etsy: parseInt(document.getElementById('editEtsy').value) || 0,
-                wix: parseInt(document.getElementById('editWix').value) || 0,
-                wayfair: parseInt(document.getElementById('editWayfair').value) || 0,
-                treasuremarts: parseInt(document.getElementById('editTreasureMarts').value) || 0
+                etsy:          parseInt(document.getElementById('editEtsy').value)          || 0,
+                wix:           parseInt(document.getElementById('editWix').value)           || 0,
+                wayfair:       parseInt(document.getElementById('editWayfair').value)       || 0,
+                treasuremarts: parseInt(document.getElementById('editTreasureMarts').value) || 0,
             };
-            if (alloc.etsy > newQty) { showToast('Etsy cannot exceed warehouse qty', 'error'); return; }
-            if (alloc.wix > newQty) { showToast('Wix cannot exceed warehouse qty', 'error'); return; }
+
+            if (alloc.etsy > newQty)    { showToast('Etsy cannot exceed warehouse qty',    'error'); return; }
+            if (alloc.wix > newQty)     { showToast('Wix cannot exceed warehouse qty',     'error'); return; }
             if (alloc.wayfair > newQty) { showToast('Wayfair cannot exceed warehouse qty', 'error'); return; }
             if (alloc.etsy !== alloc.wix) { showToast('Etsy and Wix must match', 'error'); return; }
-            
+
+            // Only update fields mobile owns — SKU, wholesalePrice, retailPrice are NOT touched
             currentItem.productName = document.getElementById('editProductName').value.trim();
-            currentItem.sku = document.getElementById('editSku').value.trim();
-            currentItem.brandName = document.getElementById('editBrand').value.trim();
-            currentItem.qty = newQty;
-            currentItem.wholesalePrice = parseFloat(document.getElementById('editWholesalePrice').value) || 0;
-            currentItem.retailPrice = parseFloat(document.getElementById('editRetailPrice').value) || 0;
-            currentItem.channels = { ...currentItem.channels, ...alloc };
-            autoAdjustChannelAllocations(currentItem);
-            
-            logActivity('ITEM_EDITED', { sku: currentItem.sku, alloc });
-            applyFilters(); updateStats(); saveToStorage();
-            
-            if (sbConnected) { await saveItemToSupabase(currentItem); }
-            else { addToOfflineQueue({ type: 'edit', itemId: currentItem.id }); }
-            closeItemModal();
-            showToast('Item updated!', 'success');
+            currentItem.brandName   = document.getElementById('editBrand').value.trim();
+            currentItem.comments    = document.getElementById('editComments').value.trim();
+            currentItem.qty         = newQty;
+            currentItem.channels    = { ...currentItem.channels, ...alloc };
+            // NOTE: autoAdjustChannelAllocations() intentionally removed — desktop manages allocation logic
+
+            logActivity('ITEM_EDITED', { sku: currentItem.sku, qty: newQty, alloc });
+            applyFilters(); updateStats();
+            // NOTE: saveToStorage() intentionally removed — Supabase is the only source of truth
+
+            if (sbConnected) {
+                const ok = await saveItemToSupabase(currentItem);
+                closeItemModal();
+                if (ok) showToast('Item updated!', 'success');
+                else    showToast('⚠️ Save failed — check connection', 'error');
+            } else {
+                addToOfflineQueue('item_update', {
+                    sku:      currentItem.sku,
+                    qty:      newQty,
+                    channels: alloc,
+                    comments: currentItem.comments
+                });
+                closeItemModal();
+                showToast('Saved offline — will sync when connected', 'warning');
+            }
         }
-        
+
         // ============================================================================
         // SALE MODAL
         // ============================================================================
-        
+
         function markAsSold() { if (currentItem) openSaleModal(); }
-        
+
         function openSaleModal() {
             document.getElementById('saleItemName').textContent = currentItem.productName || 'Unnamed';
-            document.getElementById('saleItemSku').textContent = 'SKU: ' + (currentItem.sku || 'N/A');
-            document.getElementById('saleQty').value = 1;
-            document.getElementById('saleDate').value = new Date().toISOString().split('T')[0];
+            document.getElementById('saleItemSku').textContent  = 'SKU: ' + (currentItem.sku || 'N/A');
+            document.getElementById('saleQty').value   = 1;
+            document.getElementById('saleDate').value  = new Date().toISOString().split('T')[0];
             document.getElementById('saleNotes').value = '';
+
             const ch = currentItem.channels || {};
-            if (ch.etsy > 0) document.getElementById('saleChannel').value = 'etsy';
-            else if (ch.wix > 0) document.getElementById('saleChannel').value = 'wix';
-            else if (ch.wayfair > 0) document.getElementById('saleChannel').value = 'wayfair';
+            if      (ch.etsy          > 0) document.getElementById('saleChannel').value = 'etsy';
+            else if (ch.wix           > 0) document.getElementById('saleChannel').value = 'wix';
+            else if (ch.wayfair       > 0) document.getElementById('saleChannel').value = 'wayfair';
             else if (ch.treasuremarts > 0) document.getElementById('saleChannel').value = 'treasuremarts';
+
             updateSalePrice();
             document.getElementById('itemModal').classList.remove('active');
             document.getElementById('saleModal').classList.add('active');
         }
-        function updateSalePrice() { document.getElementById('salePrice').value = calculateChannelPrice(currentItem, document.getElementById('saleChannel').value).toFixed(2); }
+
+        function updateSalePrice() {
+            // Reads stored price from DB — never calculates
+            const p = getChannelPrice(currentItem, document.getElementById('saleChannel').value);
+            document.getElementById('salePrice').value = p != null ? p.toFixed(2) : '';
+            // If null, leave field empty so user must enter price manually
+        }
+
         function closeSaleModal() { document.getElementById('saleModal').classList.remove('active'); }
         function closeSaleModalOutside(e) { if (e.target === e.currentTarget) closeSaleModal(); }
-        
+
         async function confirmSale() {
             if (!currentItem) return;
-            const channel = document.getElementById('saleChannel').value;
-            const qtySold = parseInt(document.getElementById('saleQty').value) || 1;
+            const channel  = document.getElementById('saleChannel').value;
+            const qtySold  = parseInt(document.getElementById('saleQty').value)   || 1;
             const salePrice = parseFloat(document.getElementById('salePrice').value) || 0;
-            const ch = currentItem.channels || {};
-            const curQty = ch[channel] || 0;
+            const ch        = currentItem.channels || {};
+            const curQty    = ch[channel] || 0;
+
             if (qtySold > curQty && !confirm('Only ' + curQty + ' in ' + channel + '. Proceed?')) return;
-            
+
             const oldWh = parseInt(currentItem.qty) || 0;
             currentItem.channels = { ...currentItem.channels, [channel]: Math.max(0, curQty - qtySold) };
-            currentItem.qty = Math.max(0, oldWh - qtySold);
-            autoAdjustChannelAllocations(currentItem, channel);
-            
+            currentItem.qty      = Math.max(0, oldWh - qtySold);
+            // NOTE: autoAdjustChannelAllocations() intentionally removed
+
             logActivity('ITEM_SOLD', { sku: currentItem.sku, channel, qtySold, salePrice });
-            salesHistory.push({ timestamp: new Date().toISOString(), sku: currentItem.sku, channel, qtySold, salePrice });
-            localStorage.setItem('ccd_mobile_sales', JSON.stringify(salesHistory));
-            
-            applyFilters(); updateStats(); saveToStorage();
-            
+            // NOTE: salesHistory.push() intentionally removed — retired in v4.0
+            // NOTE: localStorage ccd_mobile_sales intentionally removed — retired in v4.0
+
+            applyFilters(); updateStats();
+            // NOTE: saveToStorage() intentionally removed
+
             if (sbConnected) {
                 await saveItemToSupabase(currentItem);
                 await recordSaleToSupabase(currentItem, qtySold, channel, salePrice);
                 closeSaleModal();
                 showToast('Sold ' + qtySold + ' from ' + channel + ' for $' + salePrice.toFixed(2), 'success');
             } else {
-                addToOfflineQueue({ type: 'sold', sku: currentItem.sku, channel, qtySold });
+                addToOfflineQueue('sale', {
+                    sku:         currentItem.sku,
+                    channel,
+                    qtySold,
+                    salePrice,
+                    productName: currentItem.productName || '',
+                    brandName:   currentItem.brandName   || ''
+                });
                 closeSaleModal();
                 showToast('Sale saved offline', 'warning');
             }
         }
-        
+
         function formatTime(date) {
             const diff = new Date() - date;
             const m = Math.floor(diff / 60000), h = Math.floor(diff / 3600000), d = Math.floor(diff / 86400000);
             if (m < 1) return 'Just now'; if (m < 60) return m + 'm ago'; if (h < 24) return h + 'h ago';
             if (d < 7) return d + 'd ago'; return date.toLocaleDateString();
         }
-        
+
         // ============================================================================
-        // CHANNEL ALLOCATION AUTO-ADJUSTMENT (v2.5.3)
+        // SETTINGS, LOG, CLEAR DATA
         // ============================================================================
-        
-        function autoAdjustChannelAllocations(item, soldChannel = null) {
-            if (!item || !item.channels) { item.channels = {}; return { adjusted: false }; }
-            const adj = { adjusted: false, changes: [] };
-            const wQty = parseInt(item.qty) || 0;
-            const ch = item.channels;
-            let eQ = parseInt(ch.etsy) || 0, wQ = parseInt(ch.wix) || 0;
-            
-            if (soldChannel === 'etsy' && wQ !== eQ) { ch.wix = eQ; adj.adjusted = true; }
-            else if (soldChannel === 'wix' && eQ !== wQ) { ch.etsy = wQ; adj.adjusted = true; }
-            else { const s = Math.min(eQ, wQ); if (eQ !== s || wQ !== s) { ch.etsy = ch.wix = s; adj.adjusted = true; } eQ = wQ = s; }
-            
-            if ((parseInt(ch.etsy)||0) > wQty) { ch.etsy = ch.wix = wQty; adj.adjusted = true; }
-            if ((parseInt(ch.wayfair)||0) > wQty) { ch.wayfair = wQty; adj.adjusted = true; }
-            
-            // PAR alerts
-            const fEW = parseInt(ch.etsy) || 0;
-            if (item.channelParEnabled && item.channelParMin > 0 && fEW <= item.channelParMin)
-                showToast('⚠️ Channel PAR: ' + item.sku + ' at ' + fEW, 'warning');
-            if (item.minParLevel > 0 && wQty < item.minParLevel)
-                showToast('⚠️ Reorder: ' + item.sku + ' at ' + wQty, 'warning');
-            
-            return adj;
-        }
-        
-        // ============================================================================
-        // SETTINGS & LOG
-        // ============================================================================
-        
+
         function showSettings() {
             updateConnectionUI();
             if (lastSyncTime) document.getElementById('lastSyncDate').textContent = formatTime(lastSyncTime);
@@ -1434,83 +1629,127 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
         }
         function closeSettings() { document.getElementById('settingsModal').classList.remove('active'); }
         function closeSettingsOutside(e) { if (e.target === e.currentTarget) closeSettings(); }
+
         function confirmClearData() {
-            if (confirm('Clear all local data?')) {
-                localStorage.removeItem('ccd_mobile_inventory'); localStorage.removeItem('ccd_mobile_sales');
-                inventory = []; salesHistory = []; filteredInventory = [];
-                applyFilters(); updateStats(); closeSettings();
-                showToast('Local data cleared', 'success');
+            // v4.0: clears auth keys and disconnects. Retired keys (inventory/sales/log) not touched.
+            if (confirm('Clear local auth data and disconnect from database?')) {
+                localStorage.removeItem('ccd_mobile_auth');
+                localStorage.removeItem('ccd_mobile_auth_expiry');
+                sbClient = null; sbConnected = false; isConnected = false;
+                closeSettings();
+                window.location.reload();
             }
         }
-        
-        function showActivityLog() {
-            const el = document.getElementById('logContent');
-            el.textContent = activityLog.length === 0 ? 'No activity logged yet.' :
-                activityLog.slice().reverse().map(e => '[' + new Date(e.timestamp).toLocaleString() + ']\n' + e.action + '\n' + JSON.stringify(e.details, null, 2) + '\n' + '─'.repeat(30)).join('\n\n');
+
+        async function showActivityLog() {
+            // v4.0: queries Supabase activity_log directly, no local array
             closeSettings();
+            const el = document.getElementById('logContent');
+            el.textContent = 'Loading...';
             document.getElementById('logModal').classList.add('active');
+
+            if (!sbClient || !sbConnected) {
+                el.textContent = 'Connect to database to view activity log.';
+                return;
+            }
+            try {
+                const { data, error } = await sbClient
+                    .from('activity_log')
+                    .select('*')
+                    .eq('device', 'Mobile-v4.0')
+                    .order('created_at', { ascending: false })
+                    .limit(50);
+                if (error) throw error;
+                if (!data || data.length === 0) { el.textContent = 'No mobile activity logged yet.'; return; }
+                el.textContent = data.map(e =>
+                    '[' + new Date(e.created_at).toLocaleString() + ']\n' +
+                    e.action + '\n' +
+                    JSON.stringify(e.details, null, 2) + '\n' +
+                    '─'.repeat(30)
+                ).join('\n\n');
+            } catch (e) {
+                el.textContent = 'Failed to load: ' + e.message;
+            }
         }
+
         function closeLogModal() { document.getElementById('logModal').classList.remove('active'); }
         function closeLogModalOutside(e) { if (e.target === e.currentTarget) closeLogModal(); }
+
         function copyLog() {
-            const text = activityLog.slice().reverse().map(e => '[' + e.timestamp + '] ' + e.action + ': ' + JSON.stringify(e.details)).join('\n');
-            navigator.clipboard.writeText(text).then(() => showToast('Copied!', 'success')).catch(() => showToast('Copy failed', 'error'));
+            // v4.0: reads from DOM, not from retired activityLog[] array
+            const text = document.getElementById('logContent')?.innerText || '';
+            navigator.clipboard.writeText(text)
+                .then(() => showToast('Copied!', 'success'))
+                .catch(() => showToast('Copy failed', 'error'));
         }
-        
+
         // ============================================================================
         // TREASUREMART INVENTORY AUDIT
         // ============================================================================
-        
+
         let treasureMartAudit = {};
-        
+
         function loadTreasureMartAudit() { try { const s = localStorage.getItem('ccd_tm_audit'); if (s) treasureMartAudit = JSON.parse(s); } catch (e) { treasureMartAudit = {}; } }
         function saveTreasureMartAuditState() { try { localStorage.setItem('ccd_tm_audit', JSON.stringify(treasureMartAudit)); } catch (e) {} }
-        
-        function calculateTMNetProfitMargin(item, tmPrice) {
-            const ws = parseFloat(item.wholesalePrice) || 0;
-            const ib = ws * ((parseFloat(item.ibShipping) || 0) / 100);
-            const tariff = parseFloat(item.tariff) || 0;
-            const commission = (ws * 2) * 0.10;
-            const totalCost = ws + ib + tariff + commission;
-            return tmPrice <= 0 ? 0 : ((tmPrice - totalCost) / tmPrice) * 100;
-        }
-        
+
         function showTreasureMartReport() {
             loadTreasureMartAudit();
             const tmItems = inventory.filter(i => (i.channels?.treasuremarts || 0) > 0);
-            tmItems.sort((a, b) => { const bA = a.brandName || 'ZZZ', bB = b.brandName || 'ZZZ'; return bA !== bB ? bA.localeCompare(bB) : (a.productName || '').localeCompare(b.productName || ''); });
-            
+            tmItems.sort((a, b) => {
+                const bA = a.brandName || 'ZZZ', bB = b.brandName || 'ZZZ';
+                return bA !== bB ? bA.localeCompare(bB) : (a.productName || '').localeCompare(b.productName || '');
+            });
+
             let totalExp = 0, totalVal = 0, foundCt = 0, partCt = 0, missCt = 0, remCt = 0;
             const listDiv = document.getElementById('treasureMartList');
-            
+
             if (tmItems.length === 0) {
                 listDiv.innerHTML = '<div style="text-align:center;padding:40px 20px;color:#6B7280;"><div style="font-size:48px;margin-bottom:10px;">📦</div><div style="font-size:16px;font-weight:600;">No TreasureMart Inventory</div></div>';
             } else {
                 listDiv.innerHTML = tmItems.map(item => {
-                    const eQ = item.channels?.treasuremarts || 0;
-                    const price = calculateChannelPrice(item, 'treasuremarts');
-                    const margin = calculateTMNetProfitMargin(item, price);
-                    totalExp += eQ; totalVal += eQ * price;
-                    const as = treasureMartAudit[item.id] || { status: 'unchecked', foundQty: eQ, note: '' };
-                    const st = as.status, fQ = as.foundQty !== undefined ? as.foundQty : eQ, note = as.note || '';
-                    if (st === 'found') foundCt += eQ;
-                    else if (st === 'partial') { foundCt += fQ; partCt += (eQ - fQ); }
-                    else if (st === 'missing') missCt += eQ;
-                    else if (st === 'removed') remCt += eQ;
-                    const colors = { unchecked: {bg:'white',bd:'#E5E7EB',tx:'#374151'}, found: {bg:'#F0FDF4',bd:'#A7F3D0',tx:'#047857'}, partial: {bg:'#FFFBEB',bd:'#FCD34D',tx:'#B45309'}, missing: {bg:'#FEF2F2',bd:'#FECACA',tx:'#DC2626'}, removed: {bg:'#EFF6FF',bd:'#93C5FD',tx:'#1D4ED8'} };
-                    const c = colors[st] || colors.unchecked;
+                    const eQ    = item.channels?.treasuremarts || 0;
+                    // Use stored price — null shows as ---
+                    const price  = getChannelPrice(item, 'treasuremarts');
+                    const margin = item.channelMargins?.treasuremarts ?? null;
+
+                    totalExp += eQ;
+                    totalVal += eQ * (price ?? 0);  // null price counts as $0 in totals
+
+                    const as   = treasureMartAudit[item.id] || { status: 'unchecked', foundQty: eQ, note: '' };
+                    const st   = as.status;
+                    const fQ   = as.foundQty !== undefined ? as.foundQty : eQ;
+                    const note = as.note || '';
+
+                    if (st === 'found')   foundCt += eQ;
+                    else if (st === 'partial')  { foundCt += fQ; partCt += (eQ - fQ); }
+                    else if (st === 'missing')  missCt += eQ;
+                    else if (st === 'removed')  remCt  += eQ;
+
+                    const colors = {
+                        unchecked: {bg:'white',     bd:'#E5E7EB', tx:'#374151'},
+                        found:     {bg:'#F0FDF4',   bd:'#A7F3D0', tx:'#047857'},
+                        partial:   {bg:'#FFFBEB',   bd:'#FCD34D', tx:'#B45309'},
+                        missing:   {bg:'#FEF2F2',   bd:'#FECACA', tx:'#DC2626'},
+                        removed:   {bg:'#EFF6FF',   bd:'#93C5FD', tx:'#1D4ED8'}
+                    };
+                    const c       = colors[st] || colors.unchecked;
                     const stLabel = st === 'found' ? '✓ Found' : st === 'partial' ? '◐ Partial' : st === 'missing' ? '✗ Missing' : st === 'removed' ? '↩ Removed' : '○ Not Checked';
+
+                    const priceDisplay  = price  != null ? '$' + price.toFixed(2)    : '---';
+                    const marginDisplay = margin != null ? margin.toFixed(1) + '% margin' : '--- margin';
+                    const valueDisplay  = price  != null ? '$' + (eQ * price).toFixed(2) : '---';
+
                     return `<div id="tm-item-${item.id}" style="background:${c.bg};border:2px solid ${c.bd};border-radius:8px;padding:10px;margin-bottom:8px;">
                         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
                             <span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:4px;background:${c.bd};color:${c.tx};">${stLabel}</span>
-                            <span style="font-size:12px;color:#059669;font-weight:600;">${margin.toFixed(1)}% margin</span>
+                            <span style="font-size:12px;color:#059669;font-weight:600;">${marginDisplay}</span>
                         </div>
                         <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:8px;">
                             <div style="flex:1;"><div style="font-size:11px;color:#6B7280;font-weight:500;">${item.brandName||'No Brand'}</div>
                             <div style="font-weight:600;font-size:14px;${st==='missing'?'text-decoration:line-through;color:#DC2626;':''}">${item.productName||'Unnamed'}</div>
                             <div style="font-size:11px;color:#6B7280;">SKU: ${item.sku||'N/A'}</div></div>
-                            <div style="text-align:right;"><div style="font-weight:700;font-size:16px;color:${c.tx};">$${price.toFixed(2)}</div>
-                            <div style="font-size:12px;color:#6B7280;">×${eQ} = $${(eQ*price).toFixed(2)}</div></div>
+                            <div style="text-align:right;"><div style="font-weight:700;font-size:16px;color:${c.tx};">${priceDisplay}</div>
+                            <div style="font-size:12px;color:#6B7280;">×${eQ} = ${valueDisplay}</div></div>
                         </div>
                         <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;padding:8px;background:#F9FAFB;border-radius:6px;">
                             <span style="font-size:12px;color:#374151;flex:1;">Found:</span>
@@ -1520,32 +1759,33 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
                             <span style="font-size:12px;color:#6B7280;">/ ${eQ}</span>
                         </div>
                         <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-bottom:8px;">
-                            <button onclick="setTMStatus('${item.id}','found')" style="padding:6px 4px;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;border:2px solid ${st==='found'?'#10B981':'#D1D5DB'};background:${st==='found'?'#10B981':'white'};color:${st==='found'?'white':'#374151'};">✓ Found</button>
-                            <button onclick="setTMStatus('${item.id}','partial')" style="padding:6px 4px;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;border:2px solid ${st==='partial'?'#F59E0B':'#D1D5DB'};background:${st==='partial'?'#F59E0B':'white'};color:${st==='partial'?'white':'#374151'};">◐ Partial</button>
-                            <button onclick="setTMStatus('${item.id}','missing')" style="padding:6px 4px;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;border:2px solid ${st==='missing'?'#DC2626':'#D1D5DB'};background:${st==='missing'?'#DC2626':'white'};color:${st==='missing'?'white':'#374151'};">✗ Missing</button>
-                            <button onclick="setTMStatus('${item.id}','removed')" style="padding:6px 4px;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;border:2px solid ${st==='removed'?'#3B82F6':'#D1D5DB'};background:${st==='removed'?'#3B82F6':'white'};color:${st==='removed'?'white':'#374151'};">↩ Removed</button>
+                            <button onclick="setTMStatus('${item.id}','found')"   style="padding:6px 4px;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;border:2px solid ${st==='found'   ?'#10B981':'#D1D5DB'};background:${st==='found'   ?'#10B981':'white'};color:${st==='found'   ?'white':'#374151'};">✓ Found</button>
+                            <button onclick="setTMStatus('${item.id}','partial')" style="padding:6px 4px;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;border:2px solid ${st==='partial' ?'#F59E0B':'#D1D5DB'};background:${st==='partial' ?'#F59E0B':'white'};color:${st==='partial' ?'white':'#374151'};">◐ Partial</button>
+                            <button onclick="setTMStatus('${item.id}','missing')" style="padding:6px 4px;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;border:2px solid ${st==='missing' ?'#DC2626':'#D1D5DB'};background:${st==='missing' ?'#DC2626':'white'};color:${st==='missing' ?'white':'#374151'};">✗ Missing</button>
+                            <button onclick="setTMStatus('${item.id}','removed')" style="padding:6px 4px;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;border:2px solid ${st==='removed' ?'#3B82F6':'#D1D5DB'};background:${st==='removed' ?'#3B82F6':'white'};color:${st==='removed' ?'white':'#374151'};">↩ Removed</button>
                         </div>
                         <div style="margin-top:6px;">
                             <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px;">
-                                <button onclick="addTMQuickNote('${item.id}','Damaged')" style="font-size:10px;padding:3px 6px;border-radius:4px;border:1px solid #D1D5DB;background:${note.includes('Damaged')?'#FEE2E2':'white'};cursor:pointer;">Damaged</button>
+                                <button onclick="addTMQuickNote('${item.id}','Damaged')"     style="font-size:10px;padding:3px 6px;border-radius:4px;border:1px solid #D1D5DB;background:${note.includes('Damaged')    ?'#FEE2E2':'white'};cursor:pointer;">Damaged</button>
                                 <button onclick="addTMQuickNote('${item.id}','Wrong Price')" style="font-size:10px;padding:3px 6px;border-radius:4px;border:1px solid #D1D5DB;background:${note.includes('Wrong Price')?'#FEF3C7':'white'};cursor:pointer;">Wrong Price</button>
-                                <button onclick="addTMQuickNote('${item.id}','Sold')" style="font-size:10px;padding:3px 6px;border-radius:4px;border:1px solid #D1D5DB;background:${note.includes('Sold')?'#DBEAFE':'white'};cursor:pointer;">Sold</button>
+                                <button onclick="addTMQuickNote('${item.id}','Sold')"        style="font-size:10px;padding:3px 6px;border-radius:4px;border:1px solid #D1D5DB;background:${note.includes('Sold')       ?'#DBEAFE':'white'};cursor:pointer;">Sold</button>
                             </div>
                             <input type="text" id="tm-note-${item.id}" value="${note}" placeholder="Add note..." onchange="updateTMNote('${item.id}')" style="width:100%;padding:6px 8px;font-size:12px;border:1px solid #D1D5DB;border-radius:4px;box-sizing:border-box;">
-                        </div></div>`;
+                        </div>
+                    </div>`;
                 }).join('');
             }
-            
-            document.getElementById('tmTotalItems').textContent = totalExp;
+
+            document.getElementById('tmTotalItems').textContent   = totalExp;
             document.getElementById('tmCheckedCount').textContent = foundCt;
             document.getElementById('tmPartialCount').textContent = partCt;
             document.getElementById('tmMissingCount').textContent = missCt;
             document.getElementById('tmRemovedCount').textContent = remCt;
-            document.getElementById('tmTotalValue').textContent = '$' + totalVal.toFixed(2);
+            document.getElementById('tmTotalValue').textContent   = '$' + totalVal.toFixed(2);
             closeSettings();
             document.getElementById('treasureMartModal').classList.add('active');
         }
-        
+
         function adjustTMQty(itemId, delta) {
             const item = inventory.find(i => String(i.id) === String(itemId));
             if (!item) return;
@@ -1553,10 +1793,10 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
             if (!treasureMartAudit[itemId]) treasureMartAudit[itemId] = { status: 'unchecked', foundQty: eQ, note: '' };
             const nF = Math.max(0, Math.min(eQ, treasureMartAudit[itemId].foundQty + delta));
             treasureMartAudit[itemId].foundQty = nF;
-            treasureMartAudit[itemId].status = nF === eQ ? 'found' : nF === 0 ? 'missing' : 'partial';
+            treasureMartAudit[itemId].status   = nF === eQ ? 'found' : nF === 0 ? 'missing' : 'partial';
             saveTreasureMartAuditState(); showTreasureMartReport();
         }
-        
+
         function setTMStatus(itemId, status) {
             const item = inventory.find(i => String(i.id) === String(itemId));
             if (!item) return;
@@ -1564,11 +1804,11 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
             if (status === 'removed' && !confirm('Move ' + eQ + ' unit(s) back to Warehouse?')) return;
             if (!treasureMartAudit[itemId]) treasureMartAudit[itemId] = { status: 'unchecked', foundQty: eQ, note: '' };
             treasureMartAudit[itemId].status = status;
-            if (status === 'found') treasureMartAudit[itemId].foundQty = eQ;
-            else if (status === 'missing' || status === 'removed') treasureMartAudit[itemId].foundQty = 0;
+            if (status === 'found')                                     treasureMartAudit[itemId].foundQty = eQ;
+            else if (status === 'missing' || status === 'removed')      treasureMartAudit[itemId].foundQty = 0;
             saveTreasureMartAuditState(); showTreasureMartReport();
         }
-        
+
         function addTMQuickNote(itemId, qn) {
             const item = inventory.find(i => String(i.id) === String(itemId));
             if (!treasureMartAudit[itemId]) treasureMartAudit[itemId] = { status: 'unchecked', foundQty: item?.channels?.treasuremarts || 0, note: '' };
@@ -1578,7 +1818,7 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
             treasureMartAudit[itemId].note = n;
             saveTreasureMartAuditState(); showTreasureMartReport();
         }
-        
+
         function updateTMNote(itemId) {
             const el = document.getElementById('tm-note-' + itemId);
             if (!el) return;
@@ -1587,32 +1827,35 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
             treasureMartAudit[itemId].note = el.value;
             saveTreasureMartAuditState();
         }
-        
+
         function resetTreasureMartAudit() {
             if (!confirm('Reset all audit checkmarks?')) return;
             treasureMartAudit = {}; localStorage.removeItem('ccd_tm_audit');
             showTreasureMartReport(); showToast('Audit reset', 'success');
         }
-        
+
         async function saveTreasureMartAudit() {
             const changes = [];
             let totalMissing = 0, totalPartial = 0, totalRemoved = 0;
+
             for (const [itemId, as] of Object.entries(treasureMartAudit)) {
                 if (typeof as !== 'object') continue;
                 const item = inventory.find(i => String(i.id) === String(itemId));
                 if (!item) continue;
                 const eQ = item.channels?.treasuremarts || 0;
+
                 if (as.status === 'missing') {
-                    changes.push({ item, action: 'missing', deduct: eQ }); totalMissing += eQ;
+                    changes.push({ item, action: 'missing', deductQty: eQ }); totalMissing += eQ;
                 } else if (as.status === 'partial') {
                     const mQ = eQ - (as.foundQty || 0);
-                    if (mQ > 0) { changes.push({ item, action: 'partial', deduct: mQ }); totalPartial += mQ; }
+                    if (mQ > 0) { changes.push({ item, action: 'partial', deductQty: mQ }); totalPartial += mQ; }
                 } else if (as.status === 'removed') {
-                    // 'removed' = physically pulled back to warehouse — restore qty to warehouse
-                    changes.push({ item, action: 'removed', qty: eQ }); totalRemoved += eQ;
+                    changes.push({ item, action: 'removed', restoreQty: eQ }); totalRemoved += eQ;
                 }
             }
+
             if (changes.length === 0) { showToast('No changes (all found)', 'success'); return; }
+
             let msg = 'Save audit?\n';
             if (totalMissing) msg += '• ' + totalMissing + ' units MISSING (written off)\n';
             if (totalPartial) msg += '• ' + totalPartial + ' units PARTIAL missing (written off)\n';
@@ -1623,18 +1866,18 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
             const auditLog = [];
 
             for (const ch of changes) {
-                const item = ch.item;
+                const item      = ch.item;
                 const beforeQty = parseInt(item.qty) || 0;
                 const beforeTM  = item.channels?.treasuremarts || 0;
 
                 if (ch.action === 'missing' || ch.action === 'partial') {
                     // Write off: deduct from both TM channel and warehouse total
-                    item.channels.treasuremarts = Math.max(0, beforeTM - ch.deduct);
-                    item.qty = Math.max(0, beforeQty - ch.deduct);
+                    item.channels.treasuremarts = Math.max(0, beforeTM - ch.deductQty);
+                    item.qty = Math.max(0, beforeQty - ch.deductQty);
                 } else if (ch.action === 'removed') {
-                    // Return to warehouse: zero TM channel, add qty back to warehouse
+                    // Return to warehouse: zero TM channel, restore qty to warehouse (does NOT deduct)
                     item.channels.treasuremarts = 0;
-                    item.qty = beforeQty + ch.qty;  // FIX: restore qty to warehouse
+                    item.qty = beforeQty + ch.restoreQty;
                 }
 
                 if (sbConnected) {
@@ -1644,14 +1887,12 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
                         auditLog.push({
                             sku: item.sku, productName: item.productName,
                             action: ch.action,
-                            tmBefore: beforeTM,
-                            tmAfter: item.channels.treasuremarts,
-                            whBefore: beforeQty,
-                            whAfter: item.qty
+                            tmBefore: beforeTM,    tmAfter: item.channels.treasuremarts,
+                            whBefore: beforeQty,   whAfter: item.qty
                         });
                     } else {
                         failed++;
-                        // Roll back in-memory change so UI stays consistent with DB
+                        // Roll back in-memory changes so UI stays consistent with DB
                         item.channels.treasuremarts = beforeTM;
                         item.qty = beforeQty;
                         showToast('⚠️ DB save failed for ' + (item.sku || 'item') + ' — changes rolled back', 'error');
@@ -1659,41 +1900,41 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
                 } else {
                     // Offline: queue and accept locally
                     saved++;
-                    addToOfflineQueue({ type: 'audit_save', sku: item.sku, action: ch.action, tmBefore: beforeTM, whBefore: beforeQty });
+                    addToOfflineQueue('audit_save', {
+                        sku:        item.sku,
+                        action:     ch.action,
+                        deductQty:  ch.deductQty  || 0,
+                        restoreQty: ch.restoreQty || 0
+                    });
                     auditLog.push({ sku: item.sku, action: ch.action, offline: true });
                 }
             }
 
-            // FIX: write audit event to activity_log in Supabase
             if (auditLog.length > 0) {
                 logActivity('TM_AUDIT_SAVED', {
-                    totalSaved: saved,
-                    totalFailed: failed,
-                    missing: totalMissing,
-                    partial: totalPartial,
-                    removed: totalRemoved,
+                    totalSaved: saved, totalFailed: failed,
+                    missing: totalMissing, partial: totalPartial, removed: totalRemoved,
                     items: auditLog
                 });
             }
 
-            saveToStorage(); applyFilters(); updateStats();
+            // NOTE: saveToStorage() intentionally removed
+            applyFilters(); updateStats();
             treasureMartAudit = {}; localStorage.removeItem('ccd_tm_audit');
 
-            if (failed > 0) {
-                showToast('⚠️ ' + saved + ' saved, ' + failed + ' failed — check log', 'warning');
-            } else {
-                showToast('✅ Audit saved! ' + saved + ' items updated', 'success');
-            }
+            if (failed > 0) showToast('⚠️ ' + saved + ' saved, ' + failed + ' failed — check log', 'warning');
+            else            showToast('✅ Audit saved! ' + saved + ' items updated', 'success');
+
             showTreasureMartReport();
         }
-        
+
         function closeTreasureMartModal() { document.getElementById('treasureMartModal').classList.remove('active'); }
         function closeTreasureMartModalOutside(e) { if (e.target === e.currentTarget) closeTreasureMartModal(); }
-        
+
         // ============================================================================
         // MISSING ITEMS REPORT
         // ============================================================================
-        
+
         function showMissingItemsReport() {
             const issues = []; let totalIssues = 0, totalValue = 0;
             for (const [id, as] of Object.entries(treasureMartAudit)) {
@@ -1701,30 +1942,58 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
                 if (as.status === 'missing' || as.status === 'partial' || as.status === 'removed') {
                     const item = inventory.find(i => String(i.id) === String(id));
                     if (!item) continue;
-                    const price = calculateChannelPrice(item, 'treasuremarts');
-                    const eQ = item.channels?.treasuremarts || 0;
-                    const mQ = as.status === 'missing' ? eQ : (as.status === 'partial' ? eQ - (as.foundQty||0) : eQ);
+                    const price = getChannelPrice(item, 'treasuremarts');
+                    const eQ    = item.channels?.treasuremarts || 0;
+                    const mQ    = as.status === 'missing' ? eQ : (as.status === 'partial' ? eQ - (as.foundQty||0) : eQ);
                     issues.push({ ...item, status: as.status, expectedQty: eQ, foundQty: as.foundQty||0, missingQty: mQ, tmPrice: price, note: as.note || '' });
-                    totalIssues += mQ; totalValue += mQ * price;
+                    totalIssues += mQ;
+                    totalValue  += mQ * (price ?? 0);  // null price counts as $0
                 }
             }
             issues.sort((a,b) => (a.brandName||'ZZZ').localeCompare(b.brandName||'ZZZ') || (a.productName||'').localeCompare(b.productName||''));
+
             const ld = document.getElementById('missingItemsList');
             if (issues.length === 0) {
                 ld.innerHTML = '<div style="text-align:center;padding:40px 20px;color:#6B7280;"><div style="font-size:48px;">✅</div><div style="font-size:16px;font-weight:600;">No Issues</div></div>';
             } else {
-                const sc = { missing:{bg:'#FEF2F2',bd:'#FECACA',tx:'#DC2626',lb:'✗ Missing'}, partial:{bg:'#FFFBEB',bd:'#FCD34D',tx:'#B45309',lb:'◐ Partial'}, removed:{bg:'#EFF6FF',bd:'#93C5FD',tx:'#1D4ED8',lb:'↩ Removed'} };
-                ld.innerHTML = issues.map(i => { const c = sc[i.status]||sc.missing; return `<div style="background:${c.bg};border:2px solid ${c.bd};border-radius:8px;padding:12px;margin-bottom:8px;">
-                    <div style="display:flex;justify-content:space-between;margin-bottom:4px;"><span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:4px;background:${c.bd};color:${c.tx};">${c.lb}</span><span style="font-size:12px;color:#6B7280;">${i.status==='partial'?'Found '+i.foundQty+'/'+i.expectedQty:'Qty: '+i.expectedQty}</span></div>
-                    <div style="display:flex;justify-content:space-between;"><div style="flex:1;"><div style="font-size:11px;color:#6B7280;">${i.brandName||'No Brand'}</div><div style="font-weight:600;font-size:14px;color:${c.tx};">${i.productName||'Unnamed'}</div><div style="font-size:12px;color:#6B7280;">SKU: ${i.sku||'N/A'}</div>${i.note?'<div style="font-size:11px;color:#9CA3AF;font-style:italic;margin-top:4px;">📝 '+i.note+'</div>':''}</div>
-                    <div style="text-align:right;"><div style="font-weight:700;color:${c.tx};font-size:16px;">$${(i.missingQty*i.tmPrice).toFixed(2)}</div><div style="font-size:11px;color:#6B7280;">${i.missingQty} × $${i.tmPrice.toFixed(2)}</div></div></div></div>`; }).join('');
+                const sc = {
+                    missing: {bg:'#FEF2F2',bd:'#FECACA',tx:'#DC2626',lb:'✗ Missing'},
+                    partial: {bg:'#FFFBEB',bd:'#FCD34D',tx:'#B45309',lb:'◐ Partial'},
+                    removed: {bg:'#EFF6FF',bd:'#93C5FD',tx:'#1D4ED8',lb:'↩ Removed'}
+                };
+                ld.innerHTML = issues.map(i => {
+                    const c = sc[i.status] || sc.missing;
+                    const priceDisplay = i.tmPrice != null ? '$' + i.tmPrice.toFixed(2) : '---';
+                    const valueDisplay = i.tmPrice != null ? '$' + (i.missingQty * i.tmPrice).toFixed(2) : '---';
+                    return `<div style="background:${c.bg};border:2px solid ${c.bd};border-radius:8px;padding:12px;margin-bottom:8px;">
+                        <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+                            <span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:4px;background:${c.bd};color:${c.tx};">${c.lb}</span>
+                            <span style="font-size:12px;color:#6B7280;">${i.status==='partial'?'Found '+i.foundQty+'/'+i.expectedQty:'Qty: '+i.expectedQty}</span>
+                        </div>
+                        <div style="display:flex;justify-content:space-between;">
+                            <div style="flex:1;">
+                                <div style="font-size:11px;color:#6B7280;">${i.brandName||'No Brand'}</div>
+                                <div style="font-weight:600;font-size:14px;color:${c.tx};">${i.productName||'Unnamed'}</div>
+                                <div style="font-size:12px;color:#6B7280;">SKU: ${i.sku||'N/A'}</div>
+                                ${i.note?`<div style="font-size:11px;color:#9CA3AF;font-style:italic;margin-top:4px;">📝 ${i.note}</div>`:''}
+                            </div>
+                            <div style="text-align:right;">
+                                <div style="font-weight:700;color:${c.tx};font-size:16px;">${valueDisplay}</div>
+                                <div style="font-size:11px;color:#6B7280;">${i.missingQty} × ${priceDisplay}</div>
+                            </div>
+                        </div>
+                    </div>`;
+                }).join('');
             }
+
             document.getElementById('missingTotalCount').textContent = totalIssues;
             document.getElementById('missingTotalValue').textContent = '$' + totalValue.toFixed(2);
             document.getElementById('missingItemsModal').classList.add('active');
         }
+
         function closeMissingItemsModal() { document.getElementById('missingItemsModal').classList.remove('active'); }
         function closeMissingItemsModalOutside(e) { if (e.target === e.currentTarget) closeMissingItemsModal(); }
+
         function copyMissingItemsReport() {
             const items = []; let tv = 0;
             for (const [id, as] of Object.entries(treasureMartAudit)) {
@@ -1732,81 +2001,104 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
                 if (['missing','partial','removed'].includes(as.status)) {
                     const item = inventory.find(i => String(i.id) === String(id));
                     if (!item) continue;
-                    const p = calculateChannelPrice(item, 'treasuremarts');
+                    const p  = getChannelPrice(item, 'treasuremarts');
                     const eQ = item.channels?.treasuremarts || 0;
                     const mQ = as.status === 'missing' ? eQ : (as.status === 'partial' ? eQ - (as.foundQty||0) : eQ);
-                    items.push({ name: item.productName, brand: item.brandName, sku: item.sku, status: as.status.toUpperCase(), qty: mQ, val: mQ*p, note: as.note });
-                    tv += mQ * p;
+                    const val = p != null ? mQ * p : 0;
+                    items.push({ name: item.productName, brand: item.brandName, sku: item.sku, status: as.status.toUpperCase(), qty: mQ, val, note: as.note });
+                    tv += val;
                 }
             }
             const lines = ['TREASUREMART AUDIT ISSUES', '='.repeat(40), 'Date: ' + new Date().toLocaleString(), ''];
-            items.forEach((i,n) => { lines.push((n+1)+'. ['+i.status+'] '+i.name, '   Brand: '+i.brand, '   SKU: '+i.sku, '   Value: $'+i.val.toFixed(2)); if (i.note) lines.push('   Note: '+i.note); lines.push(''); });
-            lines.push('='.repeat(40), 'TOTAL: '+items.length+' items, $'+tv.toFixed(2));
+            items.forEach((i, n) => {
+                lines.push((n+1) + '. [' + i.status + '] ' + i.name, '   Brand: ' + i.brand, '   SKU: ' + i.sku, '   Value: $' + i.val.toFixed(2));
+                if (i.note) lines.push('   Note: ' + i.note);
+                lines.push('');
+            });
+            lines.push('='.repeat(40), 'TOTAL: ' + items.length + ' items, $' + tv.toFixed(2));
             navigator.clipboard.writeText(lines.join('\n')).then(() => showToast('Copied!', 'success'));
         }
-        
+
         // ============================================================================
         // TM EXPORT (PDF & Excel)
         // ============================================================================
-        
+
         function exportTreasureMartPDF() {
             const tmItems = inventory.filter(i => (i.channels?.treasuremarts||0) > 0);
             tmItems.sort((a,b) => (a.brandName||'ZZZ').localeCompare(b.brandName||'ZZZ') || (a.productName||'').localeCompare(b.productName||''));
             let tI = 0, tV = 0;
             const rows = tmItems.map(i => {
-                const q = i.channels.treasuremarts||0, p = calculateChannelPrice(i,'treasuremarts'), m = calculateTMNetProfitMargin(i,p);
-                tI += q; tV += q*p;
-                const as = treasureMartAudit[i.id]; let st='○', rs='';
-                if (as && typeof as === 'object') { const s = as.status||'unchecked'; st = {found:'✓',partial:'◐',missing:'✗',removed:'↩'}[s]||'○'; rs = {found:'background:#F0FDF4;',partial:'background:#FFFBEB;',missing:'background:#FEE2E2;color:#DC2626;',removed:'background:#EFF6FF;'}[s]||''; }
-                return '<tr style="'+rs+'"><td style="padding:6px;border:1px solid #ddd;text-align:center;font-size:16px;">'+st+'</td><td style="padding:6px;border:1px solid #ddd;">'+(i.brandName||'N/A')+'</td><td style="padding:6px;border:1px solid #ddd;">'+(i.productName||'')+'</td><td style="padding:6px;border:1px solid #ddd;">'+(i.sku||'')+'</td><td style="padding:6px;border:1px solid #ddd;text-align:center;">'+q+'</td><td style="padding:6px;border:1px solid #ddd;text-align:right;">$'+p.toFixed(2)+'</td><td style="padding:6px;border:1px solid #ddd;text-align:right;">'+m.toFixed(1)+'%</td></tr>';
+                const q      = i.channels.treasuremarts || 0;
+                const price  = getChannelPrice(i, 'treasuremarts');
+                const margin = i.channelMargins?.treasuremarts ?? null;
+                tI += q; tV += q * (price ?? 0);
+
+                const as = treasureMartAudit[i.id];
+                let st = '○', rs = '';
+                if (as && typeof as === 'object') {
+                    const s = as.status || 'unchecked';
+                    st = { found:'✓', partial:'◐', missing:'✗', removed:'↩' }[s] || '○';
+                    rs = { found:'background:#F0FDF4;', partial:'background:#FFFBEB;', missing:'background:#FEE2E2;color:#DC2626;', removed:'background:#EFF6FF;' }[s] || '';
+                }
+                const priceStr  = price  != null ? '$' + price.toFixed(2)    : '---';
+                const marginStr = margin != null ? margin.toFixed(1) + '%'    : '---';
+                return `<tr style="${rs}"><td style="padding:6px;border:1px solid #ddd;text-align:center;font-size:16px;">${st}</td><td style="padding:6px;border:1px solid #ddd;">${i.brandName||'N/A'}</td><td style="padding:6px;border:1px solid #ddd;">${i.productName||''}</td><td style="padding:6px;border:1px solid #ddd;">${i.sku||''}</td><td style="padding:6px;border:1px solid #ddd;text-align:center;">${q}</td><td style="padding:6px;border:1px solid #ddd;text-align:right;">${priceStr}</td><td style="padding:6px;border:1px solid #ddd;text-align:right;">${marginStr}</td></tr>`;
             }).join('');
-            const html = '<!DOCTYPE html><html><head><title>TM Audit</title><style>body{font-family:Arial;padding:20px;font-size:11px;}h1{color:#059669;font-size:20px;}.btn{padding:12px 20px;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;}table{width:100%;border-collapse:collapse;font-size:11px;}th{background:#059669;color:white;padding:8px;}@media print{.no-print{display:none;}}</style></head><body><div class="no-print"><button class="btn" style="background:#6B7280;color:white;" onclick="window.close()">← Back</button> <button class="btn" style="background:#059669;color:white;" onclick="window.print()">🖨️ Print</button></div><h1>🐮 TreasureMart Audit</h1><div style="color:#666;margin-bottom:20px;">'+new Date().toLocaleString()+'</div><table><thead><tr><th>St</th><th>Brand</th><th>Product</th><th>SKU</th><th>Qty</th><th>Price</th><th>Margin</th></tr></thead><tbody>'+rows+'</tbody></table><div style="font-weight:bold;margin-top:10px;">Total: '+tI+' items, $'+tV.toFixed(2)+'</div><div style="margin-top:10px;font-size:11px;color:#666;">○=Unchecked ✓=Found ◐=Partial ✗=Missing ↩=Removed</div></body></html>';
-            const w = window.open('','_blank');
+            const html = `<!DOCTYPE html><html><head><title>TM Audit</title><style>body{font-family:Arial;padding:20px;font-size:11px;}h1{color:#059669;font-size:20px;}.btn{padding:12px 20px;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;}table{width:100%;border-collapse:collapse;font-size:11px;}th{background:#059669;color:white;padding:8px;}@media print{.no-print{display:none;}}</style></head><body><div class="no-print"><button class="btn" style="background:#6B7280;color:white;" onclick="window.close()">← Back</button> <button class="btn" style="background:#059669;color:white;" onclick="window.print()">🖨️ Print</button></div><h1>🐮 TreasureMart Audit</h1><div style="color:#666;margin-bottom:20px;">${new Date().toLocaleString()}</div><table><thead><tr><th>St</th><th>Brand</th><th>Product</th><th>SKU</th><th>Qty</th><th>Price</th><th>Margin</th></tr></thead><tbody>${rows}</tbody></table><div style="font-weight:bold;margin-top:10px;">Total: ${tI} items, $${tV.toFixed(2)}</div><div style="margin-top:10px;font-size:11px;color:#666;">○=Unchecked ✓=Found ◐=Partial ✗=Missing ↩=Removed | --- = not yet populated by desktop</div></body></html>`;
+            const w = window.open('', '_blank');
             if (w) { w.document.write(html); w.document.close(); } else showToast('Enable popups', 'error');
         }
-        
+
         function exportTreasureMartExcel() {
             const tmItems = inventory.filter(i => (i.channels?.treasuremarts||0) > 0);
             tmItems.sort((a,b) => (a.brandName||'ZZZ').localeCompare(b.brandName||'ZZZ'));
             const rows = ['Status,Brand,Product,SKU,Qty,Price,Margin'];
-            let tI=0, tV=0;
+            let tI = 0, tV = 0;
             tmItems.forEach(i => {
-                const q=i.channels.treasuremarts||0, p=calculateChannelPrice(i,'treasuremarts'), m=calculateTMNetProfitMargin(i,p);
-                tI+=q; tV+=q*p;
-                const as=treasureMartAudit[i.id]; let st='Unchecked';
-                if (as && typeof as==='object') { const s=as.status; st=s==='found'?'Found':s==='partial'?'Partial('+as.foundQty+'/'+q+')':s==='missing'?'MISSING':s==='removed'?'REMOVED':'Unchecked'; }
-                const esc=s=>'"'+(s||'').replace(/"/g,'""')+'"';
-                rows.push([st,esc(i.brandName),esc(i.productName),esc(i.sku),q,p.toFixed(2),m.toFixed(1)+'%'].join(','));
+                const q      = i.channels.treasuremarts || 0;
+                const price  = getChannelPrice(i, 'treasuremarts');
+                const margin = i.channelMargins?.treasuremarts ?? null;
+                tI += q; tV += q * (price ?? 0);
+
+                const as = treasureMartAudit[i.id];
+                let st = 'Unchecked';
+                if (as && typeof as === 'object') {
+                    const s = as.status;
+                    st = s === 'found' ? 'Found' : s === 'partial' ? 'Partial(' + as.foundQty + '/' + q + ')' : s === 'missing' ? 'MISSING' : s === 'removed' ? 'REMOVED' : 'Unchecked';
+                }
+                const esc = s => '"' + (s || '').replace(/"/g, '""') + '"';
+                // null price → empty string, null margin → empty string per spec
+                const priceStr  = price  != null ? price.toFixed(2)    : '';
+                const marginStr = margin != null ? margin.toFixed(1) + '%' : '';
+                rows.push([st, esc(i.brandName), esc(i.productName), esc(i.sku), q, priceStr, marginStr].join(','));
             });
-            rows.push('',',,,,'+tI+',Total:,$'+tV.toFixed(2));
-            const blob = new Blob([rows.join('\n')], {type:'text/csv'});
-            const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-            a.download = 'TM_Audit_'+new Date().toISOString().split('T')[0]+'.csv';
+            rows.push('', ',,,,' + tI + ',Total:,$' + tV.toFixed(2));
+            const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
+            const a    = document.createElement('a');
+            a.href     = URL.createObjectURL(blob);
+            a.download = 'TM_Audit_' + new Date().toISOString().split('T')[0] + '.csv';
             document.body.appendChild(a); a.click(); document.body.removeChild(a);
             showToast('Excel downloaded!', 'success');
         }
-        
+
         // ============================================================================
         // TOAST
         // ============================================================================
-        
+
         function showToast(message, type = '') {
             const t = document.getElementById('toast');
             t.textContent = message; t.className = 'toast ' + type; t.classList.add('show');
             setTimeout(() => t.classList.remove('show'), 3000);
         }
-        
+
         // ============================================================================
         // ADD NEW ITEM
         // ============================================================================
 
         function openAddItemModal() {
-            // Clear form
-            ['newProductName','newSku','newBrand','newShelf'].forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
+            ['newProductName','newSku','newBrand','newShelf'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
             document.getElementById('newQty').value = 1;
-            document.getElementById('newWholesale').value = '';
-            document.getElementById('newRetail').value = '';
-            ['newEtsy','newWix','newWayfair','newTreasureMarts'].forEach(id => { const el = document.getElementById(id); if(el) el.value = 0; });
+            ['newEtsy','newWix','newWayfair','newTreasureMarts'].forEach(id => { const el = document.getElementById(id); if (el) el.value = 0; });
             updateNewItemTotal();
             document.getElementById('addItemModal').classList.add('active');
         }
@@ -1814,10 +2106,10 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
         function closeAddItemModalOutside(e) { if (e.target === e.currentTarget) closeAddItemModal(); }
 
         function updateNewItemTotal() {
-            const t = (parseInt(document.getElementById('newEtsy').value)||0) +
-                      (parseInt(document.getElementById('newWix').value)||0) +
-                      (parseInt(document.getElementById('newWayfair').value)||0) +
-                      (parseInt(document.getElementById('newTreasureMarts').value)||0);
+            const t = (parseInt(document.getElementById('newEtsy').value)||0)
+                    + (parseInt(document.getElementById('newWix').value)||0)
+                    + (parseInt(document.getElementById('newWayfair').value)||0)
+                    + (parseInt(document.getElementById('newTreasureMarts').value)||0);
             document.getElementById('newItemTotalQty').textContent = t;
         }
 
@@ -1825,31 +2117,35 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
             const name = document.getElementById('newProductName').value.trim();
             const sku  = document.getElementById('newSku').value.trim().toUpperCase();
             if (!name) { showToast('Product name is required', 'error'); return; }
-            if (!sku)  { showToast('SKU is required', 'error'); return; }
-            // Duplicate check
+            if (!sku)  { showToast('SKU is required',          'error'); return; }
             if (inventory.find(i => i.sku === sku)) { showToast('SKU already exists: ' + sku, 'error'); return; }
 
-            const qty  = parseInt(document.getElementById('newQty').value) || 0;
+            const qty   = parseInt(document.getElementById('newQty').value) || 0;
             const alloc = {
-                etsy: parseInt(document.getElementById('newEtsy').value) || 0,
-                wix:  parseInt(document.getElementById('newWix').value)  || 0,
-                wayfair: parseInt(document.getElementById('newWayfair').value) || 0,
+                etsy:          parseInt(document.getElementById('newEtsy').value)          || 0,
+                wix:           parseInt(document.getElementById('newWix').value)           || 0,
+                wayfair:       parseInt(document.getElementById('newWayfair').value)       || 0,
                 treasuremarts: parseInt(document.getElementById('newTreasureMarts').value) || 0,
-                crazychicks: 0
+                crazychicks:   0
             };
             if (alloc.etsy !== alloc.wix) { showToast('Etsy and Wix must match', 'error'); return; }
 
             const newItem = {
                 sku, productName: name,
-                brandName: document.getElementById('newBrand').value.trim(),
+                brandName:   document.getElementById('newBrand').value.trim(),
                 shelfNumber: document.getElementById('newShelf').value.trim(),
-                qty, isActive: true,
-                wholesalePrice: parseFloat(document.getElementById('newWholesale').value) || 0,
-                retailPrice:    parseFloat(document.getElementById('newRetail').value)    || 0,
-                ibShipping: 0, tariff: 0, obShipping: 0, coopPrice: null,
+                qty, isActive: true, comments: '',
+                // Financial fields are null — desktop populates them on first save
+                wholesalePrice: null, retailPrice: null,
+                ibShipping: null, tariff: null, obShipping: null, coopPrice: null,
                 channels: alloc,
+                channelPrices:       { etsy: null, wix: null, wayfair: null, crazychicks: null, treasuremarts: null },
+                channelNetProfit:    { etsy: null, wix: null, wayfair: null, crazychicks: null, treasuremarts: null },
+                channelMargins:      { etsy: null, wix: null, wayfair: null, crazychicks: null, treasuremarts: null },
+                totalCostBasis:      null,
                 channelPriceAdjustments: { etsy:0, wix:0, wayfair:0, crazychicks:0, treasuremarts:0 },
-                channelParEnabled: false, channelParMin: 0, minParLevel: 0, maxParLevel: 0
+                channelParEnabled: false, channelParMin: 0, minParLevel: 0, maxParLevel: 0,
+                lastSoldDate: null, lastSoldChannel: null
             };
 
             if (sbConnected) {
@@ -1859,18 +2155,20 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
                     if (error) throw error;
                     newItem.id = data.id;
                     inventory.push(newItem);
-                    applyFilters(); updateStats(); saveToStorage();
+                    applyFilters(); updateStats();
+                    // NOTE: saveToStorage() intentionally removed
                     logActivity('ITEM_ADDED', { sku, productName: name });
                     closeAddItemModal();
                     showToast('✅ ' + name + ' added!', 'success');
-                } catch(e) {
+                } catch (e) {
                     showToast('Save failed: ' + e.message, 'error');
                 }
             } else {
                 newItem.id = 'local_' + Date.now();
                 inventory.push(newItem);
-                applyFilters(); updateStats(); saveToStorage();
-                addToOfflineQueue({ type: 'add', item: newItem });
+                applyFilters(); updateStats();
+                // NOTE: saveToStorage() intentionally removed
+                addToOfflineQueue('add_item', newItem);
                 closeAddItemModal();
                 showToast('Saved offline — will sync when connected', 'warning');
             }
@@ -1889,46 +2187,42 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
         function closeSalesHistoryModalOutside(e) { if (e.target === e.currentTarget) closeSalesHistoryModal(); }
 
         async function loadSalesHistory() {
-            const list = document.getElementById('salesHistoryList');
+            const list  = document.getElementById('salesHistoryList');
             const limit = parseInt(document.getElementById('shLimitFilter')?.value || '50');
             list.innerHTML = '<div style="text-align:center;padding:30px;color:#6B7280;">Loading...</div>';
 
+            // v4.0 offline fallback — no local cache, Supabase is source of truth
             if (!sbClient || !sbConnected) {
-                // Fall back to localStorage sales
-                salesHistoryCache = (JSON.parse(localStorage.getItem('ccd_mobile_sales') || '[]'))
-                    .slice(-limit)
-                    .map(s => ({
-                        sku: s.sku, product_name: s.sku, brand_name: '', qty_sold: s.qtySold,
-                        sale_channel: s.channel, sale_date: s.timestamp?.split('T')[0] || '',
-                        sale_price: s.salePrice, total_revenue: s.salePrice * s.qtySold,
-                        net_profit: null
-                    }));
-                renderSalesHistory();
+                list.innerHTML = '<div style="text-align:center;padding:30px;color:#6B7280;">Connect to database to view sales history.</div>';
                 return;
             }
+
             try {
-                const { data, error } = await sbClient.from('sales_history')
-                    .select('*').order('sale_date', { ascending: false }).limit(limit);
+                const { data, error } = await sbClient
+                    .from('sales_history')
+                    .select('*')
+                    .order('sale_date', { ascending: false })
+                    .limit(limit);
                 if (error) throw error;
                 salesHistoryCache = data || [];
                 renderSalesHistory();
-            } catch(e) {
+            } catch (e) {
                 list.innerHTML = '<div style="text-align:center;padding:30px;color:#EF4444;">Failed to load: ' + e.message + '</div>';
             }
         }
 
         function renderSalesHistory() {
-            const list = document.getElementById('salesHistoryList');
+            const list     = document.getElementById('salesHistoryList');
             const chFilter = document.getElementById('shChannelFilter')?.value || '';
             let rows = salesHistoryCache;
             if (chFilter) rows = rows.filter(r => (r.sale_channel || '').toLowerCase() === chFilter);
 
-            // Stats
             const totalSales   = rows.length;
             const totalUnits   = rows.reduce((s,r) => s + (r.qty_sold||0), 0);
             const totalRevenue = rows.reduce((s,r) => s + (r.total_revenue || (r.sale_price||0)*(r.qty_sold||1)), 0);
             const totalProfit  = rows.reduce((s,r) => s + (r.net_profit || 0), 0);
-            const setEl = (id, v) => { const el = document.getElementById(id); if(el) el.textContent = v; };
+
+            const setEl = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
             setEl('shStatSales',   totalSales);
             setEl('shStatUnits',   totalUnits);
             setEl('shStatRevenue', '$' + totalRevenue.toFixed(2));
@@ -1938,11 +2232,12 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
                 list.innerHTML = '<div class="empty-state" style="padding:40px 0;"><div class="empty-icon">📊</div><div class="empty-title">No Sales Found</div></div>';
                 return;
             }
+
             const badgeClass = ch => ({ etsy:'badge-etsy', wix:'badge-wix', wayfair:'badge-wayfair', treasuremarts:'badge-treasuremarts' }[ch] || 'badge-other');
             list.innerHTML = rows.map(r => {
-                const ch = (r.sale_channel || '').toLowerCase();
-                const revenue = r.total_revenue || ((r.sale_price||0)*(r.qty_sold||1));
-                const dateStr = r.sale_date ? new Date(r.sale_date + 'T12:00:00').toLocaleDateString('en-US', {month:'short', day:'numeric', year:'2-digit'}) : '—';
+                const ch      = (r.sale_channel || '').toLowerCase();
+                const revenue = r.total_revenue || ((r.sale_price||0) * (r.qty_sold||1));
+                const dateStr = r.sale_date ? new Date(r.sale_date + 'T12:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric', year:'2-digit' }) : '—';
                 return `<div class="sale-hist-row">
                     <div class="sale-hist-left">
                         <div class="sale-hist-product">${r.product_name || r.sku || 'Unknown'}</div>
@@ -1962,14 +2257,14 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
         // ============================================================================
         // INITIALIZATION
         // ============================================================================
-        
+
         async function initApp() {
-            loadLogFromStorage();
+            // NOTE: loadLogFromStorage() intentionally removed — activityLog[] retired in v4.0
             loadOfflineQueue();
-            updateSortUI(); // initialise sort bar visual state
-            logActivity('APP_INIT', { version: '3.2-Supabase' });
-            
-            // Try auto-connect to Supabase
+            updateSortUI();
+            logActivity('APP_INIT', { version: '4.0-Supabase' });
+
+            // Auto-connect if credentials are stored
             const creds = getSbCredentials();
             if (creds.url && creds.key) {
                 const urlEl = document.getElementById('sbUrlInput');
@@ -1978,19 +2273,21 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
                 if (keyEl) keyEl.value = creds.key;
                 await connectSupabase();
             }
-            
-            if (!sbConnected) { loadFromStorage(); updateOfflineBanner(); }
+
+            // NOTE: loadFromStorage() fallback intentionally removed — Supabase is source of truth.
+            // If not connected, show empty state with prompt to connect.
+            if (!sbConnected) { updateOfflineBanner(); }
         }
-        
+
         document.addEventListener('DOMContentLoaded', function() {
-            loadLogFromStorage();
+            // NOTE: loadLogFromStorage() intentionally removed — retired in v4.0
             loadOfflineQueue();
-            updateSortUI(); // render initial sort bar state before auth check
-            
-            const auth = localStorage.getItem('ccd_mobile_auth');
-            const exp = localStorage.getItem('ccd_mobile_auth_expiry');
+            updateSortUI();
+
+            const auth  = localStorage.getItem('ccd_mobile_auth');
+            const exp   = localStorage.getItem('ccd_mobile_auth_expiry');
             const valid = auth === 'true' && exp && parseInt(exp) > Date.now();
-            
+
             if (valid) {
                 document.getElementById('pinScreen').classList.add('hidden');
                 document.getElementById('appContainer').classList.add('active');
@@ -1999,28 +2296,32 @@ v3.3: TM Audit fixes — Removed now restores warehouse qty, per-item DB error
                 localStorage.removeItem('ccd_mobile_auth');
                 localStorage.removeItem('ccd_mobile_auth_expiry');
             }
-            
+
             const ls = localStorage.getItem('ccd_mobile_last_sync');
-            if (ls) { lastSyncTime = new Date(ls); document.getElementById('lastSyncDate').textContent = formatTime(lastSyncTime); }
+            if (ls) {
+                lastSyncTime = new Date(ls);
+                const el = document.getElementById('lastSyncDate');
+                if (el) el.textContent = formatTime(lastSyncTime);
+            }
         });
-        
+
         // Handle app resume from background
         document.addEventListener('visibilitychange', async function() {
             if (document.visibilityState === 'visible' && sbConnected) {
                 try { await loadFromSupabase(); } catch (e) {}
             }
         });
-        
-        // Handle online/offline
-        window.addEventListener('online',  () => { updateOfflineBanner(); if (sbConnected && offlineQueue.length > 0) setTimeout(syncOfflineQueue, 1000); });
+
+        // Handle online/offline events
+        window.addEventListener('online',  () => { isConnected = sbConnected; updateOfflineBanner(); if (sbConnected && offlineQueue.length > 0) setTimeout(syncOfflineQueue, 1000); });
         window.addEventListener('offline', () => { updateOfflineBanner(); });
 
         // Register Service Worker
-        if ("serviceWorker" in navigator) {
-            window.addEventListener("load", () => {
-                navigator.serviceWorker.register("./sw.js")
-                    .then(reg => console.log("SW registered:", reg.scope))
-                    .catch(err => console.log("SW failed:", err));
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./sw.js')
+                    .then(reg => console.log('SW registered:', reg.scope))
+                    .catch(err => console.log('SW failed:', err));
             });
         }
     </script>
