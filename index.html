@@ -623,6 +623,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                     <button class="btn" onclick="exportTreasureMartPDF()" style="flex: 1; min-width: 100px; font-size: 13px; padding: 10px; background: #3B82F6; color: white;">📄 Print/PDF</button>
                     <button class="btn" onclick="exportTreasureMartExcel()" style="flex: 1; min-width: 100px; font-size: 13px; padding: 10px; background: #10B981; color: white;">📊 Excel</button>
                     <button class="btn" onclick="showMissingItemsReport()" style="flex: 1; min-width: 100px; font-size: 13px; padding: 10px; background: #DC2626; color: white;">⚠️ Issues</button>
+                    <button class="btn" onclick="showAuditHistory()" style="flex: 1; min-width: 100px; font-size: 13px; padding: 10px; background: #7C3AED; color: white;">📋 History</button>
                 </div>
                 <div style="padding: 8px 15px; background: white; border-bottom: 1px solid #E5E7EB;">
                     <input type="text" id="tmSearchInput" placeholder="🔍 Search brand or product..." oninput="renderTMList()" style="width: 100%; padding: 9px 12px; border: 2px solid #E5E7EB; border-radius: 8px; font-size: 14px; outline: none; box-sizing: border-box;" onfocus="this.style.borderColor='#10B981'" onblur="this.style.borderColor='#E5E7EB'">
@@ -632,6 +633,36 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                     <button class="btn btn-secondary" onclick="resetTreasureMartAudit()" style="flex: 1; font-size: 13px;">🔄 Reset</button>
                     <button class="btn btn-primary" onclick="saveTreasureMartAudit()" style="flex: 1; font-size: 13px;">💾 Save Audit</button>
                 </div>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- Audit History Modal -->
+    <div class="modal" id="auditHistoryModal" onclick="closeAuditHistoryModalOutside(event)">
+        <div class="modal-content" style="max-width: 600px; max-height: 95vh;">
+            <div class="modal-header" style="background: linear-gradient(135deg, #7C3AED 0%, #5B21B6 100%); color: white;">
+                <div class="modal-title">📋 Audit History</div>
+                <button class="modal-close" onclick="closeAuditHistoryModal()" style="color: white;">×</button>
+            </div>
+            <div class="modal-body" style="padding: 0;">
+                <div id="auditHistoryContent" style="max-height: calc(95vh - 60px); overflow-y: auto; padding: 12px;"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Audit Detail Modal -->
+    <div class="modal" id="auditDetailModal" onclick="closeAuditDetailModalOutside(event)">
+        <div class="modal-content" style="max-width: 600px; max-height: 95vh;">
+            <div class="modal-header" style="background: linear-gradient(135deg, #5B21B6 0%, #4C1D95 100%); color: white;">
+                <div style="display: flex; align-items: center; gap: 10px; flex: 1;">
+                    <button onclick="closeAuditDetailModal()" style="background: rgba(255,255,255,0.2); border: none; color: white; border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 13px;">← Back</button>
+                    <div class="modal-title" id="auditDetailTitle">Audit Detail</div>
+                </div>
+                <button class="modal-close" onclick="closeAuditDetailModal()" style="color: white;">×</button>
+            </div>
+            <div class="modal-body" style="padding: 0;">
+                <div id="auditDetailContent" style="max-height: calc(95vh - 60px); overflow-y: auto; padding: 12px;"></div>
             </div>
         </div>
     </div>
@@ -1031,6 +1062,16 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
             applyFilters(); updateStats();
             lastSyncTime = new Date();
             localStorage.setItem('ccd_mobile_last_sync', lastSyncTime.toISOString());
+            // If TM audit is open, rebuild the list so qty changes are reflected immediately
+            if (document.getElementById('treasureMartModal')?.classList.contains('active')) {
+                tmItemsAll = inventory
+                    .filter(i => (i.channels?.treasuremarts || 0) > 0)
+                    .sort((a, b) => {
+                        const bA = a.brandName || 'ZZZ', bB = b.brandName || 'ZZZ';
+                        return bA !== bB ? bA.localeCompare(bB) : (a.productName || '').localeCompare(b.productName || '');
+                    });
+                renderTMList();
+            }
         }
 
         async function saveItemToSupabase(item) {
@@ -1048,7 +1089,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
         // Uses stored cost basis. No recalculation. Writes price_source.
         // ============================================================================
 
-        async function recordSaleToSupabase(item, qty, channel, salePrice) {
+        async function recordSaleToSupabase(item, qty, channel, salePrice, userNotes) {
             if (!sbClient || !sbConnected) return;
             try {
                 const storedPrice = getChannelPrice(item, channel);
@@ -1065,21 +1106,26 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                     .from('items').select('id').eq('sku', item.sku).single();
 
                 await sbClient.from('sales_history').insert({
-                    item_id:        itemRow?.id || null,
-                    sku:            item.sku,
-                    product_name:   item.productName || '',
-                    brand_name:     item.brandName   || '',
-                    qty_sold:       qty,
-                    sale_channel:   channel,
-                    sale_date:      new Date().toISOString().split('T')[0],
-                    sale_price:     salePrice,
-                    total_revenue:  totalRev,
-                    total_cost:     totalCost,
-                    net_profit:     netProfit,
-                    profit_margin:  margin,
-                    price_source:   priceSource,
-                    notes:          'Mobile sale via ' + channel,
-                    qty_handled:    false,   // ← triggers DB cascade for qty adjustments
+                    item_id:          itemRow?.id || null,
+                    sku:              item.sku,
+                    product_name:     item.productName || '',
+                    brand_name:       item.brandName   || '',
+                    qty_sold:         qty,
+                    sale_channel:     channel,
+                    sale_date:        new Date().toISOString().split('T')[0],
+                    sale_price:       salePrice,
+                    total_revenue:    totalRev,
+                    total_cost:       totalCost,
+                    net_profit:       netProfit,
+                    profit_margin:    margin,
+                    price_source:     priceSource,
+                    wholesale_price:  item.wholesalePrice  != null ? item.wholesalePrice  : null,
+                    ib_shipping:      item.ibShipping      != null ? item.ibShipping      : null,
+                    tariff:           item.tariff          != null ? item.tariff          : null,
+                    ob_shipping:      item.obShipping      != null ? item.obShipping      : null,
+                    notes:            'Mobile sale via ' + channel,
+                    user_notes:       userNotes || null,
+                    qty_handled:      false,   // ← triggers DB cascade for qty adjustments
                 });
 
                 // Update last_sold_date and last_sold_channel on the item
@@ -1133,7 +1179,8 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                 brandName:   row.brand_name   || '',
                 category:    row.category     || '',
                 vendor:      row.vendor       || '',
-                shelfNumber: row.shelf_number || '',
+                shelfNumber:   row.shelf_number   || '',
+                shelfLocation: row.shelf_location || '',
                 comments:    row.comments     || '',
                 isActive:    row.is_active !== false,
 
@@ -1274,7 +1321,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                             // DB trigger handles all qty cascade — do NOT call saveItemToSupabase()
                             // here because the local item has optimistic offline qtys that would
                             // overwrite what the trigger correctly computed
-                            await recordSaleToSupabase(item, p.qtySold, p.channel, p.salePrice);
+                            await recordSaleToSupabase(item, p.qtySold, p.channel, p.salePrice, p.userNotes || null);
                         }
                     } else if (entry.type === 'item_update') {
                         const { payload: p } = entry;
@@ -1399,7 +1446,8 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                     </div>
                     <div class="item-details">
                         <div class="detail-item"><span class="detail-label">Retail:</span><span class="detail-value">${retailDisplay}</span></div>
-                        <div class="detail-item"><span class="detail-label">Shelf:</span><span class="detail-value">${item.shelfNumber || 'N/A'}</span></div>
+                        <div class="detail-item"><span class="detail-label">Shelf #:</span><span class="detail-value">${item.shelfNumber || 'N/A'}</span></div>
+                        <div class="detail-item"><span class="detail-label">Location:</span><span class="detail-value">${item.shelfLocation || 'N/A'}</span></div>
                     </div>
                     <div class="item-channels">
                         <div class="channel-row"><span class="channel-label">Etsy:</span><span class="channel-qty">${ch.etsy || 0}</span><span class="${priceClass(ep)}">${fmtPrice(ep)}</span></div>
@@ -1596,6 +1644,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
             const channel   = document.getElementById('saleChannel').value;
             const qtySold   = parseInt(document.getElementById('saleQty').value)    || 1;
             const salePrice = parseFloat(document.getElementById('salePrice').value) || 0;
+            const saleNotes = (document.getElementById('saleNotes').value || '').trim();
             const ch        = currentItem.channels || {};
             const curQty    = ch[channel] || 0;
 
@@ -1629,7 +1678,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
 
             if (sbConnected) {
                 // Trigger handles all DB qty cascade — mobile just records the sale with qty_handled = false
-                await recordSaleToSupabase(currentItem, qtySold, channel, salePrice);
+                await recordSaleToSupabase(currentItem, qtySold, channel, salePrice, saleNotes);
                 closeSaleModal();
                 showToast('Sold ' + qtySold + ' from ' + channel + ' for $' + salePrice.toFixed(2), 'success');
                 // Re-sync from DB after brief delay so local state reflects trigger result
@@ -1640,6 +1689,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                     channel,
                     qtySold,
                     salePrice,
+                    userNotes:   saleNotes || null,
                     productName: currentItem.productName || '',
                     brandName:   currentItem.brandName   || ''
                 });
@@ -1915,9 +1965,89 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
             renderTMList(); showToast('Audit reset', 'success');
         }
 
+        // saveAuditToSupabase — writes full audit snapshot to tm_audits + tm_audit_items
+        // Called after all item qty changes are successfully saved to DB.
+        async function saveAuditToSupabase(auditSnapshot) {
+            if (!sbClient || !sbConnected) return;
+            try {
+                // Build counts and value totals
+                const tmItems = inventory.filter(i => (i.channels?.treasuremarts || 0) > 0 || auditSnapshot[String(i.id)]);
+                let totalExpected = 0, totalFound = 0, totalPartialCount = 0,
+                    totalMissingCount = 0, totalRemovedCount = 0,
+                    valExpected = 0, valFound = 0;
+
+                const itemRows = [];
+                for (const item of tmItems) {
+                    const as       = auditSnapshot[String(item.id)];
+                    const eQ       = item.channels?.treasuremarts || 0;
+                    const price    = item.channelPrices?.treasuremarts || item.retailPrice || 0;
+                    const status   = as?.status || 'found';
+                    const foundQty = status === 'missing'  ? 0
+                                   : status === 'partial'  ? (as?.foundQty || 0)
+                                   : status === 'removed'  ? 0
+                                   : eQ; // found
+
+                    totalExpected += eQ;
+                    totalFound    += foundQty;
+                    valExpected   += eQ * price;
+                    valFound      += foundQty * price;
+
+                    if      (status === 'missing')  totalMissingCount += eQ;
+                    else if (status === 'partial')  totalPartialCount += (eQ - foundQty);
+                    else if (status === 'removed')  totalRemovedCount += eQ;
+
+                    itemRows.push({
+                        item_id:        item.id || null,
+                        sku:            item.sku,
+                        product_name:   item.productName  || null,
+                        brand_name:     item.brandName    || null,
+                        expected_qty:   eQ,
+                        found_qty:      foundQty,
+                        status:         status,
+                        price_at_audit: price || null,
+                        notes:          as?.note || null,
+                    });
+                }
+
+                // Insert audit header
+                const { data: auditHeader, error: headerErr } = await sbClient
+                    .from('tm_audits')
+                    .insert({
+                        audit_date:           new Date().toISOString().split('T')[0],
+                        total_items_expected: totalExpected,
+                        total_items_found:    totalFound,
+                        total_items_partial:  totalPartialCount,
+                        total_items_missing:  totalMissingCount,
+                        total_items_removed:  totalRemovedCount,
+                        total_value_expected: parseFloat(valExpected.toFixed(2)),
+                        total_value_found:    parseFloat(valFound.toFixed(2)),
+                        created_by:           'mobile',
+                    })
+                    .select('id')
+                    .single();
+
+                if (headerErr) { console.warn('Audit header save failed:', headerErr.message); return; }
+
+                // Attach audit_id to each item row and insert in bulk
+                const auditId = auditHeader.id;
+                const rowsWithId = itemRows.map(r => ({ ...r, audit_id: auditId }));
+
+                // Insert in batches of 50 to avoid request size limits
+                for (let i = 0; i < rowsWithId.length; i += 50) {
+                    const batch = rowsWithId.slice(i, i + 50);
+                    const { error: itemErr } = await sbClient.from('tm_audit_items').insert(batch);
+                    if (itemErr) console.warn('Audit items batch save failed:', itemErr.message);
+                }
+
+            } catch (e) { console.warn('saveAuditToSupabase error:', e.message); }
+        }
+
         async function saveTreasureMartAudit() {
             const changes = [];
             let totalMissing = 0, totalPartial = 0, totalRemoved = 0;
+
+            // Capture snapshot of audit state BEFORE changes (needed for saveAuditToSupabase)
+            const auditSnapshot = { ...treasureMartAudit };
 
             for (const [itemId, as] of Object.entries(treasureMartAudit)) {
                 if (typeof as !== 'object') continue;
@@ -1993,6 +2123,11 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                 }
             }
 
+            // Save full audit snapshot to tm_audits + tm_audit_items (online only)
+            if (sbConnected && saved > 0) {
+                await saveAuditToSupabase(auditSnapshot);
+            }
+
             if (auditLog.length > 0) {
                 logActivity('TM_AUDIT_SAVED', {
                     totalSaved: saved, totalFailed: failed,
@@ -2013,6 +2148,162 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
 
         function closeTreasureMartModal() { document.getElementById('treasureMartModal').classList.remove('active'); }
         function closeTreasureMartModalOutside(e) { if (e.target === e.currentTarget) closeTreasureMartModal(); }
+
+        // ============================================================================
+        // AUDIT HISTORY VIEWER
+        // ============================================================================
+
+        function closeAuditHistoryModal() { document.getElementById('auditHistoryModal').classList.remove('active'); }
+        function closeAuditHistoryModalOutside(e) { if (e.target === e.currentTarget) closeAuditHistoryModal(); }
+        function closeAuditDetailModal() {
+            document.getElementById('auditDetailModal').classList.remove('active');
+            document.getElementById('auditHistoryModal').classList.add('active');
+        }
+        function closeAuditDetailModalOutside(e) { if (e.target === e.currentTarget) closeAuditDetailModal(); }
+
+        async function showAuditHistory() {
+            if (!sbClient || !sbConnected) {
+                showToast('Must be connected to view audit history', 'error'); return;
+            }
+            const el = document.getElementById('auditHistoryContent');
+            el.innerHTML = '<div style="text-align:center;padding:30px;color:#6B7280;">Loading audit history…</div>';
+            document.getElementById('auditHistoryModal').classList.add('active');
+
+            try {
+                const { data, error } = await sbClient
+                    .from('tm_audits')
+                    .select('*')
+                    .order('audit_date', { ascending: false })
+                    .order('created_at', { ascending: false })
+                    .limit(30);
+
+                if (error) throw error;
+
+                if (!data || data.length === 0) {
+                    el.innerHTML = '<div style="text-align:center;padding:40px;color:#6B7280;">No audit history found.<br><small>Audits saved from this app will appear here.</small></div>';
+                    return;
+                }
+
+                el.innerHTML = data.map(audit => {
+                    const date    = new Date(audit.audit_date + 'T12:00:00').toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric', year:'numeric' });
+                    const missing = audit.total_items_missing || 0;
+                    const partial = audit.total_items_partial || 0;
+                    const removed = audit.total_items_removed || 0;
+                    const found   = audit.total_items_found   || 0;
+                    const expected= audit.total_items_expected|| 0;
+                    const hasIssues = missing > 0 || partial > 0 || removed > 0;
+                    const valFound  = parseFloat(audit.total_value_found   || 0).toFixed(2);
+                    const valExpect = parseFloat(audit.total_value_expected|| 0).toFixed(2);
+
+                    return `<div onclick="showAuditDetail('${audit.id}')" style="background:white;border:1px solid #E5E7EB;border-radius:10px;padding:12px 14px;margin-bottom:10px;cursor:pointer;transition:box-shadow 0.15s;" onmouseover="this.style.boxShadow='0 2px 8px rgba(0,0,0,0.1)'" onmouseout="this.style.boxShadow='none'">
+                        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;">
+                            <div style="font-weight:600;font-size:15px;color:#1F2937;">📅 ${date}</div>
+                            <div style="font-size:12px;color:${hasIssues ? '#DC2626' : '#10B981'};font-weight:600;background:${hasIssues ? '#FEF2F2' : '#F0FDF4'};padding:2px 8px;border-radius:12px;">${hasIssues ? '⚠️ Issues' : '✅ Clean'}</div>
+                        </div>
+                        <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:4px;text-align:center;margin-bottom:8px;">
+                            <div><div style="font-size:10px;color:#6B7280;">Expected</div><div style="font-size:15px;font-weight:700;color:#374151;">${expected}</div></div>
+                            <div><div style="font-size:10px;color:#10B981;">Found</div><div style="font-size:15px;font-weight:700;color:#10B981;">${found}</div></div>
+                            <div><div style="font-size:10px;color:#F59E0B;">Partial</div><div style="font-size:15px;font-weight:700;color:#F59E0B;">${partial}</div></div>
+                            <div><div style="font-size:10px;color:#DC2626;">Missing</div><div style="font-size:15px;font-weight:700;color:#DC2626;">${missing}</div></div>
+                            <div><div style="font-size:10px;color:#3B82F6;">Removed</div><div style="font-size:15px;font-weight:700;color:#3B82F6;">${removed}</div></div>
+                        </div>
+                        <div style="display:flex;justify-content:space-between;font-size:12px;color:#6B7280;border-top:1px solid #F3F4F6;padding-top:6px;">
+                            <span>Value Found: <strong style="color:#047857;">$${valFound}</strong></span>
+                            <span>Value Expected: <strong style="color:#374151;">$${valExpect}</strong></span>
+                            <span style="color:#7C3AED;">Tap for details →</span>
+                        </div>
+                        ${audit.notes ? `<div style="font-size:12px;color:#6B7280;margin-top:4px;font-style:italic;">📝 ${audit.notes}</div>` : ''}
+                    </div>`;
+                }).join('');
+
+            } catch (e) {
+                el.innerHTML = `<div style="text-align:center;padding:30px;color:#DC2626;">Error loading history: ${e.message}</div>`;
+            }
+        }
+
+        async function showAuditDetail(auditId) {
+            document.getElementById('auditHistoryModal').classList.remove('active');
+            const el    = document.getElementById('auditDetailContent');
+            const title = document.getElementById('auditDetailTitle');
+            el.innerHTML = '<div style="text-align:center;padding:30px;color:#6B7280;">Loading audit detail…</div>';
+            document.getElementById('auditDetailModal').classList.add('active');
+
+            try {
+                const { data: audit, error: auditErr } = await sbClient
+                    .from('tm_audits').select('*').eq('id', auditId).single();
+                if (auditErr) throw auditErr;
+
+                const { data: items, error: itemsErr } = await sbClient
+                    .from('tm_audit_items')
+                    .select('*')
+                    .eq('audit_id', auditId)
+                    .order('status')
+                    .order('brand_name');
+                if (itemsErr) throw itemsErr;
+
+                const date = new Date(audit.audit_date + 'T12:00:00').toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric', year:'numeric' });
+                title.textContent = '📋 ' + date;
+
+                const statusOrder = { missing: 0, partial: 1, removed: 2, found: 3 };
+                const sorted = (items || []).slice().sort((a, b) => (statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9));
+
+                const statusColor = { found: '#10B981', partial: '#F59E0B', missing: '#DC2626', removed: '#3B82F6' };
+                const statusLabel = { found: '✅ Found', partial: '⚠️ Partial', missing: '❌ Missing', removed: '📦 Removed' };
+
+                // Summary header
+                let html = `<div style="background:#F5F3FF;border:1px solid #DDD6FE;border-radius:10px;padding:12px;margin-bottom:12px;">
+                    <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:4px;text-align:center;margin-bottom:8px;">
+                        <div><div style="font-size:10px;color:#6B7280;">Expected</div><div style="font-size:16px;font-weight:700;color:#374151;">${audit.total_items_expected||0}</div></div>
+                        <div><div style="font-size:10px;color:#10B981;">Found</div><div style="font-size:16px;font-weight:700;color:#10B981;">${audit.total_items_found||0}</div></div>
+                        <div><div style="font-size:10px;color:#F59E0B;">Partial</div><div style="font-size:16px;font-weight:700;color:#F59E0B;">${audit.total_items_partial||0}</div></div>
+                        <div><div style="font-size:10px;color:#DC2626;">Missing</div><div style="font-size:16px;font-weight:700;color:#DC2626;">${audit.total_items_missing||0}</div></div>
+                        <div><div style="font-size:10px;color:#3B82F6;">Removed</div><div style="font-size:16px;font-weight:700;color:#3B82F6;">${audit.total_items_removed||0}</div></div>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;font-size:13px;border-top:1px solid #DDD6FE;padding-top:8px;">
+                        <span>Value Expected: <strong>$${parseFloat(audit.total_value_expected||0).toFixed(2)}</strong></span>
+                        <span>Value Found: <strong style="color:#047857;">$${parseFloat(audit.total_value_found||0).toFixed(2)}</strong></span>
+                    </div>
+                </div>`;
+
+                if (sorted.length === 0) {
+                    html += '<div style="text-align:center;padding:20px;color:#6B7280;">No item detail records for this audit.</div>';
+                } else {
+                    // Group by status for display
+                    const groups = {};
+                    for (const item of sorted) {
+                        if (!groups[item.status]) groups[item.status] = [];
+                        groups[item.status].push(item);
+                    }
+
+                    for (const status of ['missing','partial','removed','found']) {
+                        if (!groups[status]) continue;
+                        html += `<div style="font-size:12px;font-weight:700;color:${statusColor[status]};margin:10px 0 6px;text-transform:uppercase;letter-spacing:0.05em;">${statusLabel[status]} (${groups[status].length})</div>`;
+                        for (const item of groups[status]) {
+                            const price = item.price_at_audit ? '$' + parseFloat(item.price_at_audit).toFixed(2) : '—';
+                            const diff  = item.status === 'partial' ? `<span style="color:#DC2626;font-size:11px;"> (−${item.expected_qty - item.found_qty})</span>` : '';
+                            html += `<div style="background:white;border:1px solid #F3F4F6;border-left:3px solid ${statusColor[status]};border-radius:6px;padding:8px 10px;margin-bottom:6px;">
+                                <div style="display:flex;justify-content:space-between;align-items:center;">
+                                    <div>
+                                        <div style="font-size:13px;font-weight:600;color:#1F2937;">${item.brand_name || ''} ${item.product_name || item.sku}</div>
+                                        <div style="font-size:11px;color:#9CA3AF;">${item.sku}</div>
+                                    </div>
+                                    <div style="text-align:right;">
+                                        <div style="font-size:13px;font-weight:600;color:#374151;">${item.found_qty}/${item.expected_qty}${diff}</div>
+                                        <div style="font-size:11px;color:#9CA3AF;">${price}</div>
+                                    </div>
+                                </div>
+                                ${item.notes ? `<div style="font-size:11px;color:#6B7280;margin-top:4px;font-style:italic;">📝 ${item.notes}</div>` : ''}
+                            </div>`;
+                        }
+                    }
+                }
+
+                el.innerHTML = html;
+
+            } catch (e) {
+                el.innerHTML = `<div style="text-align:center;padding:30px;color:#DC2626;">Error loading detail: ${e.message}</div>`;
+            }
+        }
 
         // ============================================================================
         // MISSING ITEMS REPORT
@@ -2345,7 +2636,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
             // NOTE: loadLogFromStorage() intentionally removed — activityLog[] retired in v4.0
             loadOfflineQueue();
             updateSortUI();
-            logActivity('APP_INIT', { version: '4.0-Supabase' });
+            logActivity('APP_INIT', { version: '4.1-Supabase' });
 
             // Auto-connect if credentials are stored
             const creds = getSbCredentials();
