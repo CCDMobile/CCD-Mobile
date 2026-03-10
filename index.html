@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
 ================================================================================
-CCD MOBILE INVENTORY MODULE v4.0-Supabase
+CCD MOBILE INVENTORY MODULE v4.1-Supabase
 ================================================================================
 Pure display terminal backed by Supabase. Desktop CCD-INVENTORY-SYSTEM.html
 is the ONLY calculation engine. Mobile reads stored values — never calculates
@@ -584,7 +584,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                 </div>
                 <div class="settings-section">
                     <div class="settings-section-title">Version</div>
-                    <div class="settings-item"><div class="settings-item-label">App Version</div><div class="settings-item-value">v4.0 Supabase</div></div>
+                    <div class="settings-item"><div class="settings-item-label">App Version</div><div class="settings-item-value">v4.1 Supabase</div></div>
                 </div>
             </div>
         </div>
@@ -760,7 +760,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
 
     <script>
         // ============================================================================
-        // CCD MOBILE v4.0 — SUPABASE EDITION
+        // CCD MOBILE v4.1 — SUPABASE EDITION
         // Pure display terminal. Desktop is the calculation engine.
         // Mobile reads stored values. Mobile never calculates prices.
         // ============================================================================
@@ -1842,7 +1842,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                         <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px;">
                             <button onclick="addTMQuickNote('${item.id}','Damaged')"     style="font-size:10px;padding:3px 6px;border-radius:4px;border:1px solid #D1D5DB;background:${note.includes('Damaged')    ?'#FEE2E2':'white'};cursor:pointer;">Damaged</button>
                             <button onclick="addTMQuickNote('${item.id}','Wrong Price')" style="font-size:10px;padding:3px 6px;border-radius:4px;border:1px solid #D1D5DB;background:${note.includes('Wrong Price')?'#FEF3C7':'white'};cursor:pointer;">Wrong Price</button>
-                            <button onclick="addTMQuickNote('${item.id}','Sold')"        style="font-size:10px;padding:3px 6px;border-radius:4px;border:1px solid #D1D5DB;background:${note.includes('Sold')       ?'#DBEAFE':'white'};cursor:pointer;">Sold</button>
+                            <button onclick="tmMarkAsSold('${item.id}')" style="font-size:10px;padding:3px 8px;border-radius:4px;border:1px solid #DC2626;background:#DC2626;color:white;cursor:pointer;font-weight:600;">🏷 Mark as Sold</button>
                         </div>
                         <input type="text" id="tm-note-${item.id}" value="${note}" placeholder="Add note..." onchange="updateTMNote('${item.id}')" style="width:100%;padding:6px 8px;font-size:12px;border:1px solid #D1D5DB;border-radius:4px;box-sizing:border-box;">
                     </div>
@@ -1868,9 +1868,26 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
             if (status === 'removed' && !confirm('Move ' + eQ + ' unit(s) back to Warehouse?')) return;
             if (!treasureMartAudit[itemId]) treasureMartAudit[itemId] = { status: 'unchecked', foundQty: eQ, note: '' };
             treasureMartAudit[itemId].status = status;
-            if (status === 'found')                                     treasureMartAudit[itemId].foundQty = eQ;
-            else if (status === 'missing' || status === 'removed')      treasureMartAudit[itemId].foundQty = 0;
+            if      (status === 'found')                           treasureMartAudit[itemId].foundQty = eQ;
+            else if (status === 'partial')                         treasureMartAudit[itemId].foundQty = Math.max(0, eQ - 1); // start at one less so stepper is meaningful
+            else if (status === 'missing' || status === 'removed') treasureMartAudit[itemId].foundQty = 0;
             saveTreasureMartAuditState(); renderTMList();
+        }
+
+        function tmMarkAsSold(itemId) {
+            const item = inventory.find(i => String(i.id) === String(itemId));
+            if (!item) return;
+            currentItem = item;
+            // Pre-populate sale modal with TreasureMarts as the channel
+            document.getElementById('saleItemName').textContent = item.productName || 'Unnamed';
+            document.getElementById('saleItemSku').textContent  = 'SKU: ' + (item.sku || 'N/A');
+            document.getElementById('saleQty').value   = 1;
+            document.getElementById('saleDate').value  = new Date().toISOString().split('T')[0];
+            document.getElementById('saleNotes').value = '';
+            document.getElementById('saleChannel').value = 'treasuremarts';
+            updateSalePrice();
+            document.getElementById('saleModal').classList.add('active');
+            // TM modal stays open behind — renderTMList() fires after sale completes via re-sync
         }
 
         function addTMQuickNote(itemId, qn) {
@@ -1935,11 +1952,13 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                 const beforeTM  = item.channels?.treasuremarts || 0;
 
                 if (ch.action === 'missing' || ch.action === 'partial') {
-                    // Write off: deduct from both TM channel and warehouse total
+                    // Write off: zero/reduce TM channel only.
+                    // Warehouse qty (item.qty) is NOT touched — it was already reduced when
+                    // items were allocated to TM. Only Total Actual decreases (warehouse + TM).
                     item.channels.treasuremarts = Math.max(0, beforeTM - ch.deductQty);
-                    item.qty = Math.max(0, beforeQty - ch.deductQty);
+                    // item.qty intentionally unchanged
                 } else if (ch.action === 'removed') {
-                    // Return to warehouse: zero TM channel, restore qty to warehouse (does NOT deduct)
+                    // Physically returned to warehouse: zero TM, add back to warehouse qty
                     item.channels.treasuremarts = 0;
                     item.qty = beforeQty + ch.restoreQty;
                 }
