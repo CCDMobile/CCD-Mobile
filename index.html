@@ -1078,7 +1078,9 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
             if (!sbClient || !sbConnected) return false;
             try {
                 const row = itemToSbRow(item);
-                const { error } = await sbClient.from('items').upsert(row, { onConflict: 'sku' });
+                // Use UPDATE by id — mobile always updates existing items, never inserts.
+                // Avoids requiring a unique constraint on sku for upsert to work.
+                const { error } = await sbClient.from('items').update(row).eq('id', item.id);
                 if (error) throw error;
                 return true;
             } catch (e) { console.error('Save:', e); return false; }
@@ -2143,7 +2145,12 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
             if (failed > 0) showToast('⚠️ ' + saved + ' saved, ' + failed + ' failed — check log', 'warning');
             else            showToast('✅ Audit saved! ' + saved + ' items updated', 'success');
 
-            showTreasureMartReport(); // re-open with fresh sorted list after save
+            if (sbConnected) {
+                // Re-sync from DB so inventory list reflects the saved changes
+                setTimeout(async () => { await loadFromSupabase(); showTreasureMartReport(); }, 1000);
+            } else {
+                showTreasureMartReport(); // re-open with fresh sorted list after save
+            }
         }
 
         function closeTreasureMartModal() { document.getElementById('treasureMartModal').classList.remove('active'); }
