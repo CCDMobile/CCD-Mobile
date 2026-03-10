@@ -426,7 +426,6 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                 <div class="header-title">🐮 CCD Inventory</div>
                 <div class="header-actions">
                     <button class="header-btn" onclick="showSalesHistory()" title="Sales History">📈</button>
-                    <button class="header-btn" onclick="openAddItemModal()" title="Add Item">➕</button>
                     <button class="header-btn" onclick="showSettings()" title="Settings">⚙️</button>
                 </div>
             </div>
@@ -624,6 +623,9 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                     <button class="btn" onclick="exportTreasureMartPDF()" style="flex: 1; min-width: 100px; font-size: 13px; padding: 10px; background: #3B82F6; color: white;">📄 Print/PDF</button>
                     <button class="btn" onclick="exportTreasureMartExcel()" style="flex: 1; min-width: 100px; font-size: 13px; padding: 10px; background: #10B981; color: white;">📊 Excel</button>
                     <button class="btn" onclick="showMissingItemsReport()" style="flex: 1; min-width: 100px; font-size: 13px; padding: 10px; background: #DC2626; color: white;">⚠️ Issues</button>
+                </div>
+                <div style="padding: 8px 15px; background: white; border-bottom: 1px solid #E5E7EB;">
+                    <input type="text" id="tmSearchInput" placeholder="🔍 Search brand or product..." oninput="renderTMList()" style="width: 100%; padding: 9px 12px; border: 2px solid #E5E7EB; border-radius: 8px; font-size: 14px; outline: none; box-sizing: border-box;" onfocus="this.style.borderColor='#10B981'" onblur="this.style.borderColor='#E5E7EB'">
                 </div>
                 <div id="treasureMartList" style="max-height: 350px; overflow-y: auto; padding: 10px;"></div>
                 <div style="padding: 10px 15px; border-top: 1px solid #E5E7EB; display: flex; gap: 8px;">
@@ -1077,6 +1079,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                     profit_margin:  margin,
                     price_source:   priceSource,
                     notes:          'Mobile sale via ' + channel,
+                    qty_handled:    false,   // ← triggers DB cascade for qty adjustments
                 });
 
                 // Update last_sold_date and last_sold_channel on the item
@@ -1267,8 +1270,11 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                         const { payload: p } = entry;
                         const item = inventory.find(i => i.sku === p.sku);
                         if (item) {
+                            // recordSaleToSupabase inserts with qty_handled=false
+                            // DB trigger handles all qty cascade — do NOT call saveItemToSupabase()
+                            // here because the local item has optimistic offline qtys that would
+                            // overwrite what the trigger correctly computed
                             await recordSaleToSupabase(item, p.qtySold, p.channel, p.salePrice);
-                            await saveItemToSupabase(item);
                         }
                     } else if (entry.type === 'item_update') {
                         const { payload: p } = entry;
@@ -1511,10 +1517,16 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                 treasuremarts: parseInt(document.getElementById('editTreasureMarts').value) || 0,
             };
 
-            if (alloc.etsy > newQty)    { showToast('Etsy cannot exceed warehouse qty',    'error'); return; }
-            if (alloc.wix > newQty)     { showToast('Wix cannot exceed warehouse qty',     'error'); return; }
-            if (alloc.wayfair > newQty) { showToast('Wayfair cannot exceed warehouse qty', 'error'); return; }
             if (alloc.etsy !== alloc.wix) { showToast('Etsy and Wix must match', 'error'); return; }
+            if (alloc.treasuremarts > newQty) { showToast('TreasureMarts cannot exceed warehouse qty', 'error'); return; }
+
+            const availableForOnline = newQty - alloc.treasuremarts;
+            if (alloc.etsy > availableForOnline) {
+                showToast(`Etsy/Wix cannot exceed ${availableForOnline} (warehouse ${newQty} − TM ${alloc.treasuremarts})`, 'error'); return;
+            }
+            if (alloc.wayfair > availableForOnline) {
+                showToast(`Wayfair cannot exceed ${availableForOnline} (warehouse ${newQty} − TM ${alloc.treasuremarts})`, 'error'); return;
+            }
 
             // Only update fields mobile owns — SKU, wholesalePrice, retailPrice are NOT touched
             currentItem.productName = document.getElementById('editProductName').value.trim();
@@ -1581,31 +1593,47 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
 
         async function confirmSale() {
             if (!currentItem) return;
-            const channel  = document.getElementById('saleChannel').value;
-            const qtySold  = parseInt(document.getElementById('saleQty').value)   || 1;
+            const channel   = document.getElementById('saleChannel').value;
+            const qtySold   = parseInt(document.getElementById('saleQty').value)    || 1;
             const salePrice = parseFloat(document.getElementById('salePrice').value) || 0;
             const ch        = currentItem.channels || {};
             const curQty    = ch[channel] || 0;
 
             if (qtySold > curQty && !confirm('Only ' + curQty + ' in ' + channel + '. Proceed?')) return;
 
-            const oldWh = parseInt(currentItem.qty) || 0;
-            currentItem.channels = { ...currentItem.channels, [channel]: Math.max(0, curQty - qtySold) };
-            currentItem.qty      = Math.max(0, oldWh - qtySold);
-            // NOTE: autoAdjustChannelAllocations() intentionally removed
+            // ── Optimistic local update so UI refreshes immediately ──
+            // The DB trigger is the authoritative source; this just keeps the display responsive.
+            if (channel === 'treasuremarts') {
+                // TM is a physical separate pool — only decrement TM, warehouse untouched
+                currentItem.channels = { ...currentItem.channels, treasuremarts: Math.max(0, curQty - qtySold) };
+            } else {
+                // Online channels share the warehouse pool
+                const oldWh  = parseInt(currentItem.qty) || 0;
+                const newWh  = Math.max(0, oldWh - qtySold);
+                const newChQ = Math.max(0, curQty - qtySold);
+                // Mirror Etsy ↔ Wix
+                const newEtsy = channel === 'etsy' ? newChQ : channel === 'wix' ? newChQ : Math.min(ch.etsy || 0, newWh);
+                const newWix  = channel === 'wix'  ? newChQ : channel === 'etsy'? newChQ : Math.min(ch.wix  || 0, newWh);
+                currentItem.qty      = newWh;
+                currentItem.channels = {
+                    ...currentItem.channels,
+                    [channel]:    newChQ,
+                    etsy:         newEtsy,
+                    wix:          newWix,
+                    wayfair:      Math.min(ch.wayfair || 0, newWh),
+                };
+            }
 
             logActivity('ITEM_SOLD', { sku: currentItem.sku, channel, qtySold, salePrice });
-            // NOTE: salesHistory.push() intentionally removed — retired in v4.0
-            // NOTE: localStorage ccd_mobile_sales intentionally removed — retired in v4.0
-
             applyFilters(); updateStats();
-            // NOTE: saveToStorage() intentionally removed
 
             if (sbConnected) {
-                await saveItemToSupabase(currentItem);
+                // Trigger handles all DB qty cascade — mobile just records the sale with qty_handled = false
                 await recordSaleToSupabase(currentItem, qtySold, channel, salePrice);
                 closeSaleModal();
                 showToast('Sold ' + qtySold + ' from ' + channel + ' for $' + salePrice.toFixed(2), 'success');
+                // Re-sync from DB after brief delay so local state reflects trigger result
+                setTimeout(() => loadFromSupabase(), 1500);
             } else {
                 addToOfflineQueue('sale', {
                     sku:         currentItem.sku,
@@ -1616,7 +1644,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                     brandName:   currentItem.brandName   || ''
                 });
                 closeSaleModal();
-                showToast('Sale saved offline', 'warning');
+                showToast('Sale saved offline — qty will sync when connected', 'warning');
             }
         }
 
@@ -1706,98 +1734,120 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
         function loadTreasureMartAudit() { try { const s = localStorage.getItem('ccd_tm_audit'); if (s) treasureMartAudit = JSON.parse(s); } catch (e) { treasureMartAudit = {}; } }
         function saveTreasureMartAuditState() { try { localStorage.setItem('ccd_tm_audit', JSON.stringify(treasureMartAudit)); } catch (e) {} }
 
+        // Master sorted TM list — built once on open, filtered on search
+        let tmItemsAll = [];
+
         function showTreasureMartReport() {
             loadTreasureMartAudit();
-            const tmItems = inventory.filter(i => (i.channels?.treasuremarts || 0) > 0);
-            tmItems.sort((a, b) => {
-                const bA = a.brandName || 'ZZZ', bB = b.brandName || 'ZZZ';
-                return bA !== bB ? bA.localeCompare(bB) : (a.productName || '').localeCompare(b.productName || '');
-            });
+            tmItemsAll = inventory
+                .filter(i => (i.channels?.treasuremarts || 0) > 0)
+                .sort((a, b) => {
+                    const bA = a.brandName || 'ZZZ', bB = b.brandName || 'ZZZ';
+                    return bA !== bB ? bA.localeCompare(bB) : (a.productName || '').localeCompare(b.productName || '');
+                });
+            const srch = document.getElementById('tmSearchInput');
+            if (srch) srch.value = '';
+            closeSettings();
+            document.getElementById('treasureMartModal').classList.add('active');
+            renderTMList();
+        }
 
-            let totalExp = 0, totalVal = 0, foundCt = 0, partCt = 0, missCt = 0, remCt = 0;
+        function renderTMList() {
+            const q       = (document.getElementById('tmSearchInput')?.value || '').toLowerCase().trim();
             const listDiv = document.getElementById('treasureMartList');
 
-            if (tmItems.length === 0) {
-                listDiv.innerHTML = '<div style="text-align:center;padding:40px 20px;color:#6B7280;"><div style="font-size:48px;margin-bottom:10px;">📦</div><div style="font-size:16px;font-weight:600;">No TreasureMart Inventory</div></div>';
-            } else {
-                listDiv.innerHTML = tmItems.map(item => {
-                    const eQ    = item.channels?.treasuremarts || 0;
-                    // Use stored price — null shows as ---
-                    const price  = getChannelPrice(item, 'treasuremarts');
-                    const margin = item.channelMargins?.treasuremarts ?? null;
+            // Filtered list for display
+            const tmItems = q
+                ? tmItemsAll.filter(i =>
+                    (i.brandName   || '').toLowerCase().includes(q) ||
+                    (i.productName || '').toLowerCase().includes(q) ||
+                    (i.sku         || '').toLowerCase().includes(q))
+                : tmItemsAll;
 
-                    totalExp += eQ;
-                    totalVal += eQ * (price ?? 0);  // null price counts as $0 in totals
-
-                    const as   = treasureMartAudit[item.id] || { status: 'unchecked', foundQty: eQ, note: '' };
-                    const st   = as.status;
-                    const fQ   = as.foundQty !== undefined ? as.foundQty : eQ;
-                    const note = as.note || '';
-
-                    if (st === 'found')   foundCt += eQ;
-                    else if (st === 'partial')  { foundCt += fQ; partCt += (eQ - fQ); }
-                    else if (st === 'missing')  missCt += eQ;
-                    else if (st === 'removed')  remCt  += eQ;
-
-                    const colors = {
-                        unchecked: {bg:'white',     bd:'#E5E7EB', tx:'#374151'},
-                        found:     {bg:'#F0FDF4',   bd:'#A7F3D0', tx:'#047857'},
-                        partial:   {bg:'#FFFBEB',   bd:'#FCD34D', tx:'#B45309'},
-                        missing:   {bg:'#FEF2F2',   bd:'#FECACA', tx:'#DC2626'},
-                        removed:   {bg:'#EFF6FF',   bd:'#93C5FD', tx:'#1D4ED8'}
-                    };
-                    const c       = colors[st] || colors.unchecked;
-                    const stLabel = st === 'found' ? '✓ Found' : st === 'partial' ? '◐ Partial' : st === 'missing' ? '✗ Missing' : st === 'removed' ? '↩ Removed' : '○ Not Checked';
-
-                    const priceDisplay  = price  != null ? '$' + price.toFixed(2)    : '---';
-                    const marginDisplay = margin != null ? margin.toFixed(1) + '% margin' : '--- margin';
-                    const valueDisplay  = price  != null ? '$' + (eQ * price).toFixed(2) : '---';
-
-                    return `<div id="tm-item-${item.id}" style="background:${c.bg};border:2px solid ${c.bd};border-radius:8px;padding:10px;margin-bottom:8px;">
-                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-                            <span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:4px;background:${c.bd};color:${c.tx};">${stLabel}</span>
-                            <span style="font-size:12px;color:#059669;font-weight:600;">${marginDisplay}</span>
-                        </div>
-                        <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:8px;">
-                            <div style="flex:1;"><div style="font-size:11px;color:#6B7280;font-weight:500;">${item.brandName||'No Brand'}</div>
-                            <div style="font-weight:600;font-size:14px;${st==='missing'?'text-decoration:line-through;color:#DC2626;':''}">${item.productName||'Unnamed'}</div>
-                            <div style="font-size:11px;color:#6B7280;">SKU: ${item.sku||'N/A'}</div></div>
-                            <div style="text-align:right;"><div style="font-weight:700;font-size:16px;color:${c.tx};">${priceDisplay}</div>
-                            <div style="font-size:12px;color:#6B7280;">×${eQ} = ${valueDisplay}</div></div>
-                        </div>
-                        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;padding:8px;background:#F9FAFB;border-radius:6px;">
-                            <span style="font-size:12px;color:#374151;flex:1;">Found:</span>
-                            <button onclick="adjustTMQty('${item.id}',-1)" style="width:32px;height:32px;border-radius:6px;border:1px solid #D1D5DB;background:white;font-size:18px;cursor:pointer;">−</button>
-                            <span style="font-size:18px;font-weight:700;min-width:40px;text-align:center;" id="tm-found-${item.id}">${fQ}</span>
-                            <button onclick="adjustTMQty('${item.id}',1)" style="width:32px;height:32px;border-radius:6px;border:1px solid #D1D5DB;background:white;font-size:18px;cursor:pointer;">+</button>
-                            <span style="font-size:12px;color:#6B7280;">/ ${eQ}</span>
-                        </div>
-                        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-bottom:8px;">
-                            <button onclick="setTMStatus('${item.id}','found')"   style="padding:6px 4px;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;border:2px solid ${st==='found'   ?'#10B981':'#D1D5DB'};background:${st==='found'   ?'#10B981':'white'};color:${st==='found'   ?'white':'#374151'};">✓ Found</button>
-                            <button onclick="setTMStatus('${item.id}','partial')" style="padding:6px 4px;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;border:2px solid ${st==='partial' ?'#F59E0B':'#D1D5DB'};background:${st==='partial' ?'#F59E0B':'white'};color:${st==='partial' ?'white':'#374151'};">◐ Partial</button>
-                            <button onclick="setTMStatus('${item.id}','missing')" style="padding:6px 4px;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;border:2px solid ${st==='missing' ?'#DC2626':'#D1D5DB'};background:${st==='missing' ?'#DC2626':'white'};color:${st==='missing' ?'white':'#374151'};">✗ Missing</button>
-                            <button onclick="setTMStatus('${item.id}','removed')" style="padding:6px 4px;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;border:2px solid ${st==='removed' ?'#3B82F6':'#D1D5DB'};background:${st==='removed' ?'#3B82F6':'white'};color:${st==='removed' ?'white':'#374151'};">↩ Removed</button>
-                        </div>
-                        <div style="margin-top:6px;">
-                            <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px;">
-                                <button onclick="addTMQuickNote('${item.id}','Damaged')"     style="font-size:10px;padding:3px 6px;border-radius:4px;border:1px solid #D1D5DB;background:${note.includes('Damaged')    ?'#FEE2E2':'white'};cursor:pointer;">Damaged</button>
-                                <button onclick="addTMQuickNote('${item.id}','Wrong Price')" style="font-size:10px;padding:3px 6px;border-radius:4px;border:1px solid #D1D5DB;background:${note.includes('Wrong Price')?'#FEF3C7':'white'};cursor:pointer;">Wrong Price</button>
-                                <button onclick="addTMQuickNote('${item.id}','Sold')"        style="font-size:10px;padding:3px 6px;border-radius:4px;border:1px solid #D1D5DB;background:${note.includes('Sold')       ?'#DBEAFE':'white'};cursor:pointer;">Sold</button>
-                            </div>
-                            <input type="text" id="tm-note-${item.id}" value="${note}" placeholder="Add note..." onchange="updateTMNote('${item.id}')" style="width:100%;padding:6px 8px;font-size:12px;border:1px solid #D1D5DB;border-radius:4px;box-sizing:border-box;">
-                        </div>
-                    </div>`;
-                }).join('');
-            }
-
+            // Totals always computed from full list
+            let totalExp = 0, totalVal = 0, foundCt = 0, partCt = 0, missCt = 0, remCt = 0;
+            tmItemsAll.forEach(item => {
+                const eQ   = item.channels?.treasuremarts || 0;
+                const price = getChannelPrice(item, 'treasuremarts');
+                totalExp += eQ;
+                totalVal += eQ * (price ?? 0);
+                const as = treasureMartAudit[item.id] || { status: 'unchecked', foundQty: eQ };
+                const st = as.status, fQ = as.foundQty !== undefined ? as.foundQty : eQ;
+                if      (st === 'found')   foundCt += eQ;
+                else if (st === 'partial') { foundCt += fQ; partCt += (eQ - fQ); }
+                else if (st === 'missing') missCt += eQ;
+                else if (st === 'removed') remCt  += eQ;
+            });
             document.getElementById('tmTotalItems').textContent   = totalExp;
             document.getElementById('tmCheckedCount').textContent = foundCt;
             document.getElementById('tmPartialCount').textContent = partCt;
             document.getElementById('tmMissingCount').textContent = missCt;
             document.getElementById('tmRemovedCount').textContent = remCt;
             document.getElementById('tmTotalValue').textContent   = '$' + totalVal.toFixed(2);
-            closeSettings();
-            document.getElementById('treasureMartModal').classList.add('active');
+
+            if (tmItems.length === 0) {
+                listDiv.innerHTML = q
+                    ? `<div style="text-align:center;padding:40px 20px;color:#6B7280;"><div style="font-size:48px;margin-bottom:10px;">🔍</div><div style="font-size:16px;font-weight:600;">No items match "${q}"</div></div>`
+                    : '<div style="text-align:center;padding:40px 20px;color:#6B7280;"><div style="font-size:48px;margin-bottom:10px;">📦</div><div style="font-size:16px;font-weight:600;">No TreasureMart Inventory</div></div>';
+                return;
+            }
+
+            listDiv.innerHTML = tmItems.map(item => {
+                const eQ    = item.channels?.treasuremarts || 0;
+                const price  = getChannelPrice(item, 'treasuremarts');
+                const margin = item.channelMargins?.treasuremarts ?? null;
+                const as     = treasureMartAudit[item.id] || { status: 'unchecked', foundQty: eQ, note: '' };
+                const st     = as.status;
+                const fQ     = as.foundQty !== undefined ? as.foundQty : eQ;
+                const note   = as.note || '';
+                const colors = {
+                    unchecked: {bg:'white',   bd:'#E5E7EB', tx:'#374151'},
+                    found:     {bg:'#F0FDF4', bd:'#A7F3D0', tx:'#047857'},
+                    partial:   {bg:'#FFFBEB', bd:'#FCD34D', tx:'#B45309'},
+                    missing:   {bg:'#FEF2F2', bd:'#FECACA', tx:'#DC2626'},
+                    removed:   {bg:'#EFF6FF', bd:'#93C5FD', tx:'#1D4ED8'}
+                };
+                const c            = colors[st] || colors.unchecked;
+                const stLabel      = st === 'found' ? '✓ Found' : st === 'partial' ? '◐ Partial' : st === 'missing' ? '✗ Missing' : st === 'removed' ? '↩ Removed' : '○ Not Checked';
+                const priceDisplay = price  != null ? '$' + price.toFixed(2) : '---';
+                const marginDisplay= margin != null ? margin.toFixed(1) + '% margin' : '--- margin';
+                const valueDisplay = price  != null ? '$' + (eQ * price).toFixed(2) : '---';
+
+                return `<div id="tm-item-${item.id}" style="background:${c.bg};border:2px solid ${c.bd};border-radius:8px;padding:10px;margin-bottom:8px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                        <span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:4px;background:${c.bd};color:${c.tx};">${stLabel}</span>
+                        <span style="font-size:12px;color:#059669;font-weight:600;">${marginDisplay}</span>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:8px;">
+                        <div style="flex:1;"><div style="font-size:11px;color:#6B7280;font-weight:500;">${item.brandName||'No Brand'}</div>
+                        <div style="font-weight:600;font-size:14px;${st==='missing'?'text-decoration:line-through;color:#DC2626;':''}">${item.productName||'Unnamed'}</div>
+                        <div style="font-size:11px;color:#6B7280;">SKU: ${item.sku||'N/A'}</div></div>
+                        <div style="text-align:right;"><div style="font-weight:700;font-size:16px;color:${c.tx};">${priceDisplay}</div>
+                        <div style="font-size:12px;color:#6B7280;">×${eQ} = ${valueDisplay}</div></div>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;padding:8px;background:#F9FAFB;border-radius:6px;">
+                        <span style="font-size:12px;color:#374151;flex:1;">Found:</span>
+                        <button onclick="adjustTMQty('${item.id}',-1)" style="width:32px;height:32px;border-radius:6px;border:1px solid #D1D5DB;background:white;font-size:18px;cursor:pointer;">−</button>
+                        <span style="font-size:18px;font-weight:700;min-width:40px;text-align:center;" id="tm-found-${item.id}">${fQ}</span>
+                        <button onclick="adjustTMQty('${item.id}',1)" style="width:32px;height:32px;border-radius:6px;border:1px solid #D1D5DB;background:white;font-size:18px;cursor:pointer;">+</button>
+                        <span style="font-size:12px;color:#6B7280;">/ ${eQ}</span>
+                    </div>
+                    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-bottom:8px;">
+                        <button onclick="setTMStatus('${item.id}','found')"   style="padding:6px 4px;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;border:2px solid ${st==='found'   ?'#10B981':'#D1D5DB'};background:${st==='found'   ?'#10B981':'white'};color:${st==='found'   ?'white':'#374151'};">✓ Found</button>
+                        <button onclick="setTMStatus('${item.id}','partial')" style="padding:6px 4px;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;border:2px solid ${st==='partial' ?'#F59E0B':'#D1D5DB'};background:${st==='partial' ?'#F59E0B':'white'};color:${st==='partial' ?'white':'#374151'};">◐ Partial</button>
+                        <button onclick="setTMStatus('${item.id}','missing')" style="padding:6px 4px;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;border:2px solid ${st==='missing' ?'#DC2626':'#D1D5DB'};background:${st==='missing' ?'#DC2626':'white'};color:${st==='missing' ?'white':'#374151'};">✗ Missing</button>
+                        <button onclick="setTMStatus('${item.id}','removed')" style="padding:6px 4px;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;border:2px solid ${st==='removed' ?'#3B82F6':'#D1D5DB'};background:${st==='removed' ?'#3B82F6':'white'};color:${st==='removed' ?'white':'#374151'};">↩ Removed</button>
+                    </div>
+                    <div style="margin-top:6px;">
+                        <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px;">
+                            <button onclick="addTMQuickNote('${item.id}','Damaged')"     style="font-size:10px;padding:3px 6px;border-radius:4px;border:1px solid #D1D5DB;background:${note.includes('Damaged')    ?'#FEE2E2':'white'};cursor:pointer;">Damaged</button>
+                            <button onclick="addTMQuickNote('${item.id}','Wrong Price')" style="font-size:10px;padding:3px 6px;border-radius:4px;border:1px solid #D1D5DB;background:${note.includes('Wrong Price')?'#FEF3C7':'white'};cursor:pointer;">Wrong Price</button>
+                            <button onclick="addTMQuickNote('${item.id}','Sold')"        style="font-size:10px;padding:3px 6px;border-radius:4px;border:1px solid #D1D5DB;background:${note.includes('Sold')       ?'#DBEAFE':'white'};cursor:pointer;">Sold</button>
+                        </div>
+                        <input type="text" id="tm-note-${item.id}" value="${note}" placeholder="Add note..." onchange="updateTMNote('${item.id}')" style="width:100%;padding:6px 8px;font-size:12px;border:1px solid #D1D5DB;border-radius:4px;box-sizing:border-box;">
+                    </div>
+                </div>`;
+            }).join('');
         }
 
         function adjustTMQty(itemId, delta) {
@@ -1808,7 +1858,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
             const nF = Math.max(0, Math.min(eQ, treasureMartAudit[itemId].foundQty + delta));
             treasureMartAudit[itemId].foundQty = nF;
             treasureMartAudit[itemId].status   = nF === eQ ? 'found' : nF === 0 ? 'missing' : 'partial';
-            saveTreasureMartAuditState(); showTreasureMartReport();
+            saveTreasureMartAuditState(); renderTMList();
         }
 
         function setTMStatus(itemId, status) {
@@ -1820,7 +1870,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
             treasureMartAudit[itemId].status = status;
             if (status === 'found')                                     treasureMartAudit[itemId].foundQty = eQ;
             else if (status === 'missing' || status === 'removed')      treasureMartAudit[itemId].foundQty = 0;
-            saveTreasureMartAuditState(); showTreasureMartReport();
+            saveTreasureMartAuditState(); renderTMList();
         }
 
         function addTMQuickNote(itemId, qn) {
@@ -1830,7 +1880,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
             if (n.includes(qn)) n = n.replace(qn, '').replace(/,\s*,/g, ',').replace(/^,\s*|,\s*$/g, '').trim();
             else n = n ? n + ', ' + qn : qn;
             treasureMartAudit[itemId].note = n;
-            saveTreasureMartAuditState(); showTreasureMartReport();
+            saveTreasureMartAuditState(); renderTMList();
         }
 
         function updateTMNote(itemId) {
@@ -1845,7 +1895,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
         function resetTreasureMartAudit() {
             if (!confirm('Reset all audit checkmarks?')) return;
             treasureMartAudit = {}; localStorage.removeItem('ccd_tm_audit');
-            showTreasureMartReport(); showToast('Audit reset', 'success');
+            renderTMList(); showToast('Audit reset', 'success');
         }
 
         async function saveTreasureMartAudit() {
@@ -1939,7 +1989,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
             if (failed > 0) showToast('⚠️ ' + saved + ' saved, ' + failed + ' failed — check log', 'warning');
             else            showToast('✅ Audit saved! ' + saved + ' items updated', 'success');
 
-            showTreasureMartReport();
+            showTreasureMartReport(); // re-open with fresh sorted list after save
         }
 
         function closeTreasureMartModal() { document.getElementById('treasureMartModal').classList.remove('active'); }
