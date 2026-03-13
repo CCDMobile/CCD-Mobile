@@ -1105,7 +1105,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                 const margin     = (netProfit != null && totalRev > 0) ? (netProfit / totalRev) : null;
 
                 const { data: itemRow } = await sbClient
-                    .from('items').select('id').eq('sku', item.sku).single();
+                    .from('items').select('id, etsy_listing_id, wix_product_id, wayfair_sku, etsy_qty, wix_qty, wayfair_qty').eq('sku', item.sku).single();
 
                 await sbClient.from('sales_history').insert({
                     item_id:          itemRow?.id || null,
@@ -1135,6 +1135,71 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                     last_sold_date:    new Date().toISOString().split('T')[0],
                     last_sold_channel: channel,
                 }).eq('sku', item.sku);
+                
+                // ======== SYNC QUEUE: Push updated channel quantities after sale ========
+                // DB trigger handles qty deduction. Sync_queue tells Sync Hub to push to channel APIs.
+                // Calculate post-sale channel qtys from current DB values minus sale qty.
+                if (itemRow) {
+                    const saleQueueRows = [];
+                    const etsyQty = Math.max(0, (itemRow.etsy_qty || 0) - qty);
+                    const wixQty = Math.max(0, (itemRow.wix_qty || 0) - qty);
+                    const wayfairQty = (channel === 'wayfair') 
+                        ? Math.max(0, (itemRow.wayfair_qty || 0) - qty) 
+                        : (itemRow.wayfair_qty || 0);
+                    
+                    if (itemRow.etsy_listing_id) {
+                        saleQueueRows.push({
+                            item_id: itemRow.id,
+                            channel: 'etsy',
+                            operation: 'update',
+                            fields: {
+                                sku: item.sku,
+                                productName: item.productName || '',
+                                quantity: etsyQty,
+                                listingId: itemRow.etsy_listing_id,
+                                fieldTypes: ['quantity'],
+                                trigger: 'mobile_sale'
+                            }
+                        });
+                    }
+                    if (itemRow.wix_product_id) {
+                        saleQueueRows.push({
+                            item_id: itemRow.id,
+                            channel: 'wix',
+                            operation: 'update',
+                            fields: {
+                                sku: item.sku,
+                                productName: item.productName || '',
+                                quantity: wixQty,
+                                productId: itemRow.wix_product_id,
+                                fieldTypes: ['quantity'],
+                                trigger: 'mobile_sale'
+                            }
+                        });
+                    }
+                    if (itemRow.wayfair_sku && channel === 'wayfair') {
+                        saleQueueRows.push({
+                            item_id: itemRow.id,
+                            channel: 'wayfair',
+                            operation: 'update',
+                            fields: {
+                                sku: item.sku,
+                                productName: item.productName || '',
+                                quantity: wayfairQty,
+                                wayfairSku: itemRow.wayfair_sku,
+                                fieldTypes: ['quantity'],
+                                trigger: 'mobile_sale'
+                            }
+                        });
+                    }
+                    
+                    if (saleQueueRows.length > 0) {
+                        sbClient.from('sync_queue').insert(saleQueueRows).then(res => {
+                            if (res.error) console.error('[Sync Queue] Mobile sale queue error:', res.error.message);
+                            else console.log(`[Sync Queue] Mobile sale: ${saleQueueRows.length} channel update(s) queued for ${item.sku}`);
+                        });
+                    }
+                }
 
             } catch (e) { console.warn('Sale record:', e.message); }
         }
