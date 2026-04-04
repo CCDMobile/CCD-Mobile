@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
 ================================================================================
-CCD MOBILE INVENTORY MODULE v4.1-Supabase
+CCD MOBILE INVENTORY MODULE v4.2-Supabase
 ================================================================================
 Pure display terminal backed by Supabase. Desktop CCD-INVENTORY-SYSTEM.html
 is the ONLY calculation engine. Mobile reads stored values — never calculates
@@ -425,6 +425,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
             <div class="header-top">
                 <div class="header-title">🐮 CCD Inventory</div>
                 <div class="header-actions">
+                    <button class="header-btn" onclick="showWriteoffs()" title="Write-Offs">📋</button>
                     <button class="header-btn" onclick="showSalesHistory()" title="Sales History">📈</button>
                     <button class="header-btn" onclick="showSettings()" title="Settings">⚙️</button>
                 </div>
@@ -541,6 +542,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
 
                 <div class="button-group">
                     <button class="btn btn-danger" onclick="markAsSold()">Mark as Sold</button>
+                    <button class="btn" onclick="openWriteoffFromItem()" style="background:#7C3AED;color:white;">Write Off</button>
                     <button class="btn btn-primary" onclick="saveItem()">Save Changes</button>
                 </div>
             </div>
@@ -584,7 +586,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                 </div>
                 <div class="settings-section">
                     <div class="settings-section-title">Version</div>
-                    <div class="settings-item"><div class="settings-item-label">App Version</div><div class="settings-item-value">v4.1 Supabase</div></div>
+                    <div class="settings-item"><div class="settings-item-label">App Version</div><div class="settings-item-value">v4.2 Supabase</div></div>
                 </div>
             </div>
         </div>
@@ -786,12 +788,76 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
         </div>
     </div>
 
+    <!-- Write-Off Log Modal -->
+    <div class="modal" id="writeoffLogModal" onclick="closeWoLogOutside(event)">
+        <div class="modal-content" style="max-width: 560px;">
+            <div class="modal-header" style="background: linear-gradient(135deg, #7C3AED 0%, #5B21B6 100%); color: white; border-radius: 16px 16px 0 0;">
+                <div class="modal-title" style="color: white;">📋 Write-Off Log</div>
+                <button class="modal-close" onclick="closeWoLog()" style="color: white;">×</button>
+            </div>
+            <div class="modal-body" style="padding: 0;">
+                <div style="padding: 10px 15px; background: #F5F3FF; border-bottom: 1px solid #DDD6FE; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                    <select id="woStatusFilter" onchange="renderWriteoffLog()" style="padding: 6px 10px; border: 1px solid #DDD6FE; border-radius: 8px; font-size: 13px; background: white; flex: 1;">
+                        <option value="">All</option>
+                        <option value="active">Active</option>
+                        <option value="reversed">Reversed</option>
+                    </select>
+                    <select id="woLimitFilter" onchange="loadWriteoffs()" style="padding: 6px 10px; border: 1px solid #DDD6FE; border-radius: 8px; font-size: 13px; background: white; flex: 1;">
+                        <option value="25">Last 25</option>
+                        <option value="50" selected>Last 50</option>
+                        <option value="100">Last 100</option>
+                    </select>
+                </div>
+                <div style="padding: 10px 15px; background: #F5F3FF; border-bottom: 1px solid #DDD6FE; display: flex; justify-content: space-around; text-align: center;">
+                    <div><div style="font-size: 10px; color: #7C3AED; font-weight: 600; text-transform: uppercase;">Active</div><div style="font-size: 18px; font-weight: 700; color: #5B21B6;" id="woStatActive">—</div></div>
+                    <div><div style="font-size: 10px; color: #7C3AED; font-weight: 600; text-transform: uppercase;">Units</div><div style="font-size: 18px; font-weight: 700; color: #5B21B6;" id="woStatUnits">—</div></div>
+                    <div><div style="font-size: 10px; color: #7C3AED; font-weight: 600; text-transform: uppercase;">Total Loss</div><div style="font-size: 18px; font-weight: 700; color: #DC2626;" id="woStatLoss">—</div></div>
+                    <div><div style="font-size: 10px; color: #7C3AED; font-weight: 600; text-transform: uppercase;">Recovered</div><div style="font-size: 18px; font-weight: 700; color: #059669;" id="woStatRecovered">—</div></div>
+                </div>
+                <div id="writeoffLogList" style="max-height: 420px; overflow-y: auto; padding: 10px 15px;">
+                    <div class="empty-state" style="padding: 40px 0;"><div class="empty-icon">📋</div><div class="empty-title">No Write-Offs</div></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Record Write-Off Modal -->
+    <div class="modal" id="writeoffRecordModal" onclick="closeWoRecordOutside(event)">
+        <div class="modal-content">
+            <div class="modal-header" style="background: linear-gradient(135deg, #7C3AED 0%, #5B21B6 100%); color: white; border-radius: 16px 16px 0 0;">
+                <div class="modal-title" style="color: white;">📝 Record Write-Off</div>
+                <button class="modal-close" onclick="closeWoRecord()" style="color: white;">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="sale-info-box" style="border-color: #DDD6FE; background: #F5F3FF;"><div class="sale-info-title" id="woItemName">Product Name</div><div class="sale-info-sku" id="woItemSku">SKU: 00000</div></div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
+                    <div class="form-group"><label class="form-label">Quantity</label><input type="number" class="form-input" id="woQty" min="1" value="1"></div>
+                    <div class="form-group"><label class="form-label">Est. Loss</label><div class="form-input" id="woLossDisplay" style="background: #FEF2F2; color: #DC2626; font-weight: 600;">$0.00</div></div>
+                </div>
+                <div class="form-group"><label class="form-label">Reason</label>
+                    <select class="form-input" id="woReason">
+                        <option>Damaged — Shipping</option><option>Damaged — Warehouse</option><option>Damaged — Customer Return</option>
+                        <option selected>Missing</option><option>Defective</option><option>Expired / Obsolete</option>
+                        <option>Theft</option><option>Sample / Giveaway</option><option>Other</option>
+                    </select>
+                </div>
+                <div class="form-group"><label class="form-label">Location</label>
+                    <select class="form-input" id="woLocation">
+                        <option>Warehouse</option><option>TreasureMarts</option><option>In Transit</option><option>Customer</option>
+                    </select>
+                </div>
+                <div class="form-group"><label class="form-label">Notes (optional)</label><input type="text" class="form-input" id="woNotes" placeholder="Additional details..."></div>
+                <div class="button-group"><button class="btn btn-secondary" onclick="closeWoRecord()">Cancel</button><button class="btn" onclick="confirmWriteoff()" style="background:#7C3AED;color:white;">Record Write-Off</button></div>
+            </div>
+        </div>
+    </div>
+
     <!-- Toast -->
     <div class="toast" id="toast"></div>
 
     <script>
         // ============================================================================
-        // CCD MOBILE v4.1 — SUPABASE EDITION
+        // CCD MOBILE v4.2 — SUPABASE EDITION
         // Pure display terminal. Desktop is the calculation engine.
         // Mobile reads stored values. Mobile never calculates prices.
         // ============================================================================
@@ -2663,10 +2729,11 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
             let rows = salesHistoryCache;
             if (chFilter) rows = rows.filter(r => (r.sale_channel || '').toLowerCase() === chFilter);
 
-            const totalSales   = rows.length;
-            const totalUnits   = rows.reduce((s,r) => s + (r.qty_sold||0), 0);
-            const totalRevenue = rows.reduce((s,r) => s + (r.total_revenue || (r.sale_price||0)*(r.qty_sold||1)), 0);
-            const totalProfit  = rows.reduce((s,r) => s + (r.net_profit || 0), 0);
+            const activeRows = rows.filter(r => r.status !== 'reversed');
+            const totalSales   = activeRows.length;
+            const totalUnits   = activeRows.reduce((s,r) => s + (r.qty_sold||0), 0);
+            const totalRevenue = activeRows.reduce((s,r) => s + (r.total_revenue || (r.sale_price||0)*(r.qty_sold||1)), 0);
+            const totalProfit  = activeRows.reduce((s,r) => s + (r.net_profit || 0), 0);
 
             const setEl = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
             setEl('shStatSales',   totalSales);
@@ -2680,24 +2747,339 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
             }
 
             const badgeClass = ch => ({ etsy:'badge-etsy', wix:'badge-wix', wayfair:'badge-wayfair', treasuremarts:'badge-treasuremarts' }[ch] || 'badge-other');
-            list.innerHTML = rows.map(r => {
+            list.innerHTML = rows.map((r, idx) => {
                 const ch      = (r.sale_channel || '').toLowerCase();
                 const revenue = r.total_revenue || ((r.sale_price||0) * (r.qty_sold||1));
                 const dateStr = r.sale_date ? new Date(r.sale_date + 'T12:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric', year:'2-digit' }) : '—';
-                return `<div class="sale-hist-row">
+                const isReversed = r.status === 'reversed';
+                return `<div class="sale-hist-row" style="${isReversed?'opacity:0.45;':''}">
                     <div class="sale-hist-left">
-                        <div class="sale-hist-product">${r.product_name || r.sku || 'Unknown'}</div>
+                        <div class="sale-hist-product" style="${isReversed?'text-decoration:line-through;':''}">${r.product_name || r.sku || 'Unknown'}</div>
                         <div class="sale-hist-meta">
                             <span class="channel-badge ${badgeClass(ch)}">${ch || '?'}</span>
                             &nbsp;SKU: ${r.sku || '—'} &nbsp;·&nbsp; ${dateStr}
+                            ${isReversed ? '&nbsp;<span style="color:#DC2626;font-weight:700;font-size:10px;">REVERSED</span>' : ''}
                         </div>
                     </div>
-                    <div class="sale-hist-right">
-                        <div class="sale-hist-amount">$${revenue.toFixed(2)}</div>
+                    <div class="sale-hist-right" style="text-align:right;">
+                        <div class="sale-hist-amount" style="${isReversed?'text-decoration:line-through;':''}">$${revenue.toFixed(2)}</div>
                         <div class="sale-hist-qty">×${r.qty_sold || 1} @ $${(r.sale_price||0).toFixed(2)}</div>
+                        ${!isReversed ? `<button onclick="reverseSaleMobile(${idx})" style="margin-top:4px;padding:4px 10px;background:#DC2626;color:white;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;">↩ Reverse</button>` : ''}
                     </div>
                 </div>`;
             }).join('');
+        }
+
+        // ============================================================================
+        // REVERSE SALE (v4.2)
+        // ============================================================================
+        async function reverseSaleMobile(idx) {
+            const sale = salesHistoryCache && salesHistoryCache[idx];
+            if (!sale) return;
+            if (!sbClient || !sbConnected) { showToast('Not connected to database', 'error'); return; }
+
+            const qty = parseInt(sale.qty_sold) || 1;
+            const channel = sale.sale_channel || 'unknown';
+            const sku = sale.sku || '—';
+
+            if (!confirm(
+                `Reverse this sale?\n\n` +
+                `${sale.product_name || sku}\n` +
+                `Order: ${sale.order_id || '—'}\n` +
+                `Channel: ${channel} · Qty: ${qty}\n` +
+                `$${(parseFloat(sale.sale_price)||0).toFixed(2)}\n\n` +
+                `This will restore ${qty} unit(s) to warehouse and push corrected qty to channels.`
+            )) return;
+
+            try {
+                // 1. Mark sale as reversed
+                const { error: saleErr } = await sbClient.from('sales_history').update({
+                    status: 'reversed',
+                    reversed_at: new Date().toISOString(),
+                    notes: (sale.notes || '') + ` | REVERSED ${new Date().toISOString().substring(0,10)} via Mobile`
+                }).eq('id', sale.id);
+                if (saleErr) throw new Error('Failed to mark sale: ' + saleErr.message);
+
+                // 2. Fetch fresh item data
+                const { data: freshItem, error: fetchErr } = await sbClient.from('items')
+                    .select('id,qty,etsy_qty,wix_qty,wayfair_qty,treasuremarts_qty,etsy_listing_id,etsy_variant_id,wix_product_id,wix_variant_id,wayfair_sku')
+                    .eq('sku', sku).limit(1).single();
+                if (fetchErr || !freshItem) throw new Error('Item not found: ' + sku);
+
+                // 3. Restore quantities
+                const pi = v => parseInt(v) || 0;
+                const qtyUpdates = { qty: pi(freshItem.qty) + qty };
+
+                const chMap = { etsy:'etsy_qty', wix:'wix_qty', wayfair:'wayfair_qty', treasuremarts:'treasuremarts_qty' };
+                if (chMap[channel]) {
+                    qtyUpdates[chMap[channel]] = pi(freshItem[chMap[channel]]) + qty;
+                }
+                // Etsy/Wix cross-restore
+                if (channel === 'etsy' && freshItem.wix_product_id) {
+                    qtyUpdates.wix_qty = pi(freshItem.wix_qty) + qty;
+                } else if (channel === 'wix' && freshItem.etsy_listing_id) {
+                    qtyUpdates.etsy_qty = pi(freshItem.etsy_qty) + qty;
+                }
+
+                // 4. Write qty update
+                const { error: qtyErr } = await sbClient.from('items').update(qtyUpdates).eq('id', freshItem.id);
+                if (qtyErr) throw new Error('Qty restore failed: ' + qtyErr.message);
+
+                // 5. Queue sync_queue rows
+                const syncRows = [];
+                if (freshItem.etsy_listing_id && qtyUpdates.etsy_qty !== undefined) {
+                    syncRows.push({ item_id: freshItem.id, channel:'etsy', operation:'update', fields: {
+                        sku, quantity: qtyUpdates.etsy_qty, listingId: freshItem.etsy_listing_id,
+                        etsyVariantId: freshItem.etsy_variant_id || null, fieldTypes:['quantity'], trigger:'sale_reversal'
+                    }});
+                }
+                if (freshItem.wix_product_id && qtyUpdates.wix_qty !== undefined) {
+                    syncRows.push({ item_id: freshItem.id, channel:'wix', operation:'update', fields: {
+                        sku, quantity: qtyUpdates.wix_qty, productId: freshItem.wix_product_id,
+                        wixVariantId: freshItem.wix_variant_id || null, fieldTypes:['quantity'], trigger:'sale_reversal'
+                    }});
+                }
+                if (freshItem.wayfair_sku && qtyUpdates.wayfair_qty !== undefined) {
+                    syncRows.push({ item_id: freshItem.id, channel:'wayfair', operation:'update', fields: {
+                        sku, quantity: qtyUpdates.wayfair_qty, wayfairSku: freshItem.wayfair_sku,
+                        fieldTypes:['quantity'], trigger:'sale_reversal'
+                    }});
+                }
+                if (syncRows.length > 0) {
+                    await sbClient.from('sync_queue').insert(syncRows);
+                }
+
+                // 6. Update local state
+                sale.status = 'reversed';
+                sale.reversed_at = new Date().toISOString();
+                const localItem = inventory.find(i => (i.sku || i.SKU) === sku);
+                if (localItem) { localItem.qty = qtyUpdates.qty; localItem.warehouseQty = qtyUpdates.qty; localItem.quantity = qtyUpdates.qty; }
+
+                // 7. Activity log
+                if (typeof logActivity === 'function') {
+                    logActivity('SALE_REVERSED', { sale_id: sale.id, sku, qty, channel, order_id: sale.order_id, new_qty: qtyUpdates.qty });
+                }
+
+                renderSalesHistory();
+                renderInventoryList();
+                showToast(`Sale reversed: ${sku} x${qty} — qty restored`, 'success');
+            } catch (e) {
+                showToast('Reverse failed: ' + e.message, 'error');
+            }
+        }
+
+        // ============================================================================
+        // WRITE-OFF LOG + REVERSE (v4.2)
+        // ============================================================================
+        let woCache = [];
+
+        async function showWriteoffs() {
+            document.getElementById('writeoffLogModal').classList.add('active');
+            await loadWriteoffs();
+        }
+        function closeWoLog() { document.getElementById('writeoffLogModal').classList.remove('active'); }
+        function closeWoLogOutside(e) { if (e.target === e.currentTarget) closeWoLog(); }
+
+        async function loadWriteoffs() {
+            const list = document.getElementById('writeoffLogList');
+            const limit = parseInt(document.getElementById('woLimitFilter')?.value || '50');
+            list.innerHTML = '<div style="text-align:center;padding:30px;color:#6B7280;">Loading...</div>';
+
+            if (!sbClient || !sbConnected) {
+                list.innerHTML = '<div style="text-align:center;padding:30px;color:#6B7280;">Connect to database to view write-offs.</div>';
+                return;
+            }
+
+            try {
+                const { data, error } = await sbClient
+                    .from('write_offs')
+                    .select('*')
+                    .order('created_at', { ascending: false })
+                    .limit(limit);
+                if (error) throw error;
+                woCache = data || [];
+                renderWriteoffLog();
+            } catch (e) {
+                list.innerHTML = '<div style="text-align:center;padding:30px;color:#EF4444;">Failed to load: ' + e.message + '</div>';
+            }
+        }
+
+        function renderWriteoffLog() {
+            const list = document.getElementById('writeoffLogList');
+            const statusFilter = document.getElementById('woStatusFilter')?.value || '';
+            let rows = woCache;
+            if (statusFilter) rows = rows.filter(r => (r.status || 'active') === statusFilter);
+
+            const active = rows.filter(r => r.status !== 'reversed');
+            const totalUnits = active.reduce((s,r) => s + (r.quantity||0), 0);
+            const totalLoss = active.reduce((s,r) => s + parseFloat(r.total_loss||0), 0);
+            const totalRecovered = rows.reduce((s,r) => s + parseFloat(r.amount_recovered||0), 0);
+
+            const setEl = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+            setEl('woStatActive', active.length);
+            setEl('woStatUnits', totalUnits);
+            setEl('woStatLoss', '$' + totalLoss.toFixed(2));
+            setEl('woStatRecovered', '$' + totalRecovered.toFixed(2));
+
+            if (rows.length === 0) {
+                list.innerHTML = '<div class="empty-state" style="padding:40px 0;"><div class="empty-icon">📋</div><div class="empty-title">No Write-Offs Found</div></div>';
+                return;
+            }
+
+            list.innerHTML = rows.map(r => {
+                const isReversed = r.status === 'reversed';
+                const dateStr = r.created_at ? new Date(r.created_at).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'2-digit' }) : '—';
+                return `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid #E5E7EB;${isReversed?'opacity:0.5;':''}">
+                    <div style="flex:1;">
+                        <div style="font-weight:600;font-size:14px;${isReversed?'text-decoration:line-through;':''}">${r.sku || '—'}</div>
+                        <div style="font-size:12px;color:#6B7280;">${(r.product_name||'').substring(0,35)} · ${r.reason||'—'}</div>
+                        <div style="font-size:11px;color:#9CA3AF;">${dateStr} · ${r.location||'Warehouse'} · ×${r.quantity||1}</div>
+                    </div>
+                    <div style="text-align:right;min-width:90px;">
+                        <div style="font-weight:700;color:${isReversed?'#059669':'#DC2626'};font-size:14px;">${isReversed?'Reversed':'$'+(parseFloat(r.total_loss)||0).toFixed(2)}</div>
+                        ${!isReversed ? `<button onclick="reverseWriteoffMobile(${r.id},'${(r.sku||'').replace(/'/g,"\\'")}',${r.quantity||1})" style="margin-top:4px;padding:4px 10px;background:#7C3AED;color:white;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;">↩ Restore</button>` : ''}
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        async function reverseWriteoffMobile(woId, sku, qty) {
+            if (!confirm(`Reverse write-off?\n\nRestore ${qty} unit(s) of ${sku} back to warehouse?`)) return;
+            if (!sbClient || !sbConnected) { showToast('Not connected to database', 'error'); return; }
+
+            try {
+                // 1. Get current item qty
+                const { data: itemData, error: itemErr } = await sbClient
+                    .from('items').select('id,qty').eq('sku', sku).limit(1).single();
+                if (itemErr || !itemData) throw new Error('Item not found: ' + sku);
+
+                const newQty = (parseInt(itemData.qty) || 0) + parseInt(qty);
+
+                // 2. Restore qty
+                const { error: qtyErr } = await sbClient.from('items').update({ qty: newQty }).eq('id', itemData.id);
+                if (qtyErr) throw new Error('Failed to restore qty: ' + qtyErr.message);
+
+                // 3. Mark write-off as reversed
+                const { error: woErr } = await sbClient.from('write_offs').update({
+                    status: 'reversed',
+                    reversed_at: new Date().toISOString()
+                }).eq('id', woId);
+                if (woErr) throw new Error('Failed to update write-off: ' + woErr.message);
+
+                // 4. Activity log
+                if (typeof logActivity === 'function') {
+                    logActivity('WRITEOFF_REVERSED', { sku, qty, woId, newQty });
+                }
+
+                // 5. Update local inventory cache
+                const localItem = inventory.find(i => (i.sku || i.SKU) === sku);
+                if (localItem) {
+                    localItem.qty = newQty;
+                    localItem.warehouseQty = newQty;
+                    localItem.quantity = newQty;
+                    renderInventoryList();
+                }
+
+                // 6. Refresh write-off list
+                const rec = woCache.find(r => r.id === woId);
+                if (rec) { rec.status = 'reversed'; rec.reversed_at = new Date().toISOString(); }
+                renderWriteoffLog();
+
+                showToast(`Restored ${qty} unit(s) of ${sku}`, 'success');
+            } catch (e) {
+                showToast('Reverse failed: ' + e.message, 'error');
+            }
+        }
+
+        // ── Record Write-Off from Item Modal ──
+        function openWriteoffFromItem() {
+            if (!currentItem) return;
+            document.getElementById('woItemName').textContent = currentItem.productName || currentItem.product_name || currentItem.title || 'Unknown';
+            document.getElementById('woItemSku').textContent = 'SKU: ' + (currentItem.sku || currentItem.SKU || '—');
+            document.getElementById('woQty').value = 1;
+            document.getElementById('woNotes').value = '';
+            updateWoLossDisplay();
+            document.getElementById('woQty').oninput = updateWoLossDisplay;
+            document.getElementById('writeoffRecordModal').classList.add('active');
+        }
+        function closeWoRecord() { document.getElementById('writeoffRecordModal').classList.remove('active'); }
+        function closeWoRecordOutside(e) { if (e.target === e.currentTarget) closeWoRecord(); }
+
+        function updateWoLossDisplay() {
+            if (!currentItem) return;
+            const qty = parseInt(document.getElementById('woQty').value) || 1;
+            const wholesale = parseFloat(currentItem.wholesalePrice || currentItem.wholesale_price || 0);
+            const ibPct = parseFloat(currentItem.ibShipping || currentItem.ib_shipping || 0) / 100;
+            const tariffPct = parseFloat(currentItem.tariff || 0) / 100;
+            const ob = parseFloat(currentItem.obShipping || currentItem.ob_shipping || 0);
+            const landed = wholesale * (1 + ibPct + tariffPct) + ob;
+            document.getElementById('woLossDisplay').textContent = '$' + (landed * qty).toFixed(2);
+        }
+
+        async function confirmWriteoff() {
+            if (!currentItem || !sbClient || !sbConnected) { showToast('Not connected', 'error'); return; }
+            const sku = currentItem.sku || currentItem.SKU;
+            const qty = parseInt(document.getElementById('woQty').value) || 1;
+            const reason = document.getElementById('woReason').value;
+            const location = document.getElementById('woLocation').value;
+            const notes = document.getElementById('woNotes').value;
+
+            const wholesale = parseFloat(currentItem.wholesalePrice || currentItem.wholesale_price || 0);
+            const ibPct = parseFloat(currentItem.ibShipping || currentItem.ib_shipping || 0) / 100;
+            const tariffPct = parseFloat(currentItem.tariff || 0) / 100;
+            const ob = parseFloat(currentItem.obShipping || currentItem.ob_shipping || 0);
+            const landed = wholesale * (1 + ibPct + tariffPct) + ob;
+
+            const currentQty = parseInt(currentItem.qty || currentItem.warehouseQty || currentItem.quantity || 0);
+            if (qty > currentQty) { showToast(`Only ${currentQty} in warehouse`, 'error'); return; }
+
+            if (!confirm(`Write off ${qty} unit(s) of ${sku}?\nReason: ${reason}\nLoss: $${(landed*qty).toFixed(2)}`)) return;
+
+            try {
+                // 1. Insert write-off record
+                const { error: woErr } = await sbClient.from('write_offs').insert({
+                    item_id: currentItem._sbId || currentItem.id,
+                    sku: sku,
+                    product_name: currentItem.productName || currentItem.product_name || currentItem.title || '',
+                    quantity: qty,
+                    reason: reason,
+                    location: location,
+                    cost_per_unit: landed,
+                    total_loss: landed * qty,
+                    reported_by: 'Mobile PWA',
+                    notes: notes,
+                    claim_filed: 'No',
+                    amount_recovered: 0
+                });
+                if (woErr) throw new Error('Write-off insert failed: ' + woErr.message);
+
+                // 2. Deduct qty
+                const newQty = Math.max(0, currentQty - qty);
+                const { error: qtyErr } = await sbClient.from('items')
+                    .update({ qty: newQty })
+                    .eq('id', currentItem._sbId || currentItem.id);
+                if (qtyErr) throw new Error('Qty deduction failed: ' + qtyErr.message);
+
+                // 3. Update local state
+                currentItem.qty = newQty;
+                currentItem.warehouseQty = newQty;
+                currentItem.quantity = newQty;
+                if (document.getElementById('editQty')) document.getElementById('editQty').value = newQty;
+
+                const localItem = inventory.find(i => (i.sku || i.SKU) === sku);
+                if (localItem) { localItem.qty = newQty; localItem.warehouseQty = newQty; localItem.quantity = newQty; }
+
+                // 4. Log
+                if (typeof logActivity === 'function') {
+                    logActivity('WRITEOFF_RECORDED', { sku, qty, reason, location, loss: landed * qty, newQty });
+                }
+
+                closeWoRecord();
+                renderInventoryList();
+                showToast(`Write-off recorded: ${sku} ×${qty}`, 'success');
+            } catch (e) {
+                showToast('Write-off failed: ' + e.message, 'error');
+            }
         }
 
         // ============================================================================
@@ -2708,7 +3090,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
             // NOTE: loadLogFromStorage() intentionally removed — activityLog[] retired in v4.0
             loadOfflineQueue();
             updateSortUI();
-            logActivity('APP_INIT', { version: '4.1-Supabase' });
+            logActivity('APP_INIT', { version: '4.2-Supabase' });
 
             // Auto-connect if credentials are stored
             const creds = getSbCredentials();
