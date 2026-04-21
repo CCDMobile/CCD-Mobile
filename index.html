@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
 ================================================================================
-CCD MOBILE INVENTORY MODULE v4.2-Supabase
+CCD MOBILE INVENTORY MODULE v4.3-Supabase
 ================================================================================
 Pure display terminal backed by Supabase. Desktop CCD-INVENTORY-SYSTEM.html
 is the ONLY calculation engine. Mobile reads stored values — never calculates
@@ -586,7 +586,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                 </div>
                 <div class="settings-section">
                     <div class="settings-section-title">Version</div>
-                    <div class="settings-item"><div class="settings-item-label">App Version</div><div class="settings-item-value">v4.2 Supabase</div></div>
+                    <div class="settings-item"><div class="settings-item-label">App Version</div><div class="settings-item-value">v4.3 Supabase</div></div>
                 </div>
             </div>
         </div>
@@ -857,7 +857,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
 
     <script>
         // ============================================================================
-        // CCD MOBILE v4.2 — SUPABASE EDITION
+        // CCD MOBILE v4.3 — SUPABASE EDITION
         // Pure display terminal. Desktop is the calculation engine.
         // Mobile reads stored values. Mobile never calculates prices.
         // ============================================================================
@@ -1170,11 +1170,13 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                 const netProfit  = totalCost != null ? totalRev - totalCost : null;
                 const margin     = (netProfit != null && totalRev > 0) ? (netProfit / totalRev) : null;
 
-                const { data: itemRow } = await sbClient
-                    .from('items').select('id, etsy_listing_id, wix_product_id, wayfair_sku, etsy_qty, wix_qty, wayfair_qty').eq('sku', item.sku).single();
+                // Pre-fetch identity + listing IDs (these don't change across the sale).
+                // We need itemRow.id for the sales_history foreign key.
+                const { data: preItemRow } = await sbClient
+                    .from('items').select('id, etsy_listing_id, wix_product_id, wayfair_sku').eq('sku', item.sku).single();
 
                 await sbClient.from('sales_history').insert({
-                    item_id:          itemRow?.id || null,
+                    item_id:          preItemRow?.id || null,
                     sku:              item.sku,
                     product_name:     item.productName || '',
                     brand_name:       item.brandName   || '',
@@ -1195,75 +1197,88 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                     user_notes:       userNotes || null,
                     qty_handled:      false,   // ← triggers DB cascade for qty adjustments
                 });
+                // Note: DB trigger handle_sale_qty_cascade sets last_sold_date, last_sold_channel,
+                // and all qty fields. No need for a separate items.update() call here.
 
-                // Update last_sold_date and last_sold_channel on the item
-                await sbClient.from('items').update({
-                    last_sold_date:    new Date().toISOString().split('T')[0],
-                    last_sold_channel: channel,
-                }).eq('sku', item.sku);
-                
-                // ======== SYNC QUEUE: Push updated channel quantities after sale ========
-                // DB trigger handles qty deduction. Sync_queue tells Sync Hub to push to channel APIs.
-                // Calculate post-sale channel qtys from current DB values minus sale qty.
-                if (itemRow) {
-                    const saleQueueRows = [];
-                    const etsyQty = Math.max(0, (itemRow.etsy_qty || 0) - qty);
-                    const wixQty = Math.max(0, (itemRow.wix_qty || 0) - qty);
-                    const wayfairQty = (channel === 'wayfair') 
-                        ? Math.max(0, (itemRow.wayfair_qty || 0) - qty) 
-                        : (itemRow.wayfair_qty || 0);
-                    
-                    if (itemRow.etsy_listing_id) {
-                        saleQueueRows.push({
-                            item_id: itemRow.id,
-                            channel: 'etsy',
-                            operation: 'update',
-                            fields: {
-                                sku: item.sku,
-                                productName: item.productName || '',
-                                quantity: etsyQty,
-                                listingId: itemRow.etsy_listing_id,
-                                fieldTypes: ['quantity'],
-                                trigger: 'mobile_sale'
-                            }
-                        });
-                    }
-                    if (itemRow.wix_product_id) {
-                        saleQueueRows.push({
-                            item_id: itemRow.id,
-                            channel: 'wix',
-                            operation: 'update',
-                            fields: {
-                                sku: item.sku,
-                                productName: item.productName || '',
-                                quantity: wixQty,
-                                productId: itemRow.wix_product_id,
-                                fieldTypes: ['quantity'],
-                                trigger: 'mobile_sale'
-                            }
-                        });
-                    }
-                    if (itemRow.wayfair_sku && channel === 'wayfair') {
-                        saleQueueRows.push({
-                            item_id: itemRow.id,
-                            channel: 'wayfair',
-                            operation: 'update',
-                            fields: {
-                                sku: item.sku,
-                                productName: item.productName || '',
-                                quantity: wayfairQty,
-                                wayfairSku: itemRow.wayfair_sku,
-                                fieldTypes: ['quantity'],
-                                trigger: 'mobile_sale'
-                            }
-                        });
-                    }
-                    
-                    if (saleQueueRows.length > 0) {
-                        sbClient.from('sync_queue').insert(saleQueueRows).then(res => {
-                            if (res.error) console.error('[Sync Queue] Mobile sale queue error:', res.error.message);
-                            else console.log(`[Sync Queue] Mobile sale: ${saleQueueRows.length} channel update(s) queued for ${item.sku}`);
-                        });
+                // ═══════════════════════════════════════════════════════════════════
+                // SYNC QUEUE — v4.3: option (b) authoritative post-trigger read.
+                // @invariant ECOSYSTEM-011 (peer-decrement on every sale)
+                //
+                // Rationale: the trigger (handle_sale_qty_cascade v2.0.0) updates
+                // items.etsy_qty / wix_qty / wayfair_qty atomically per ECOSYSTEM-011.
+                // We re-read the row post-insert and push THOSE values to sync_queue,
+                // so the client never re-implements cascade logic. Single source of
+                // truth = trigger. No drift risk if cascade rules change later.
+                //
+                // TM sales: skip sync_queue entirely (TM has no online API).
+                // Online sales: push a row for EVERY online channel the item has a
+                // listing on, not just the source channel. This is what fixes Mary's
+                // "Wix updates but Wayfair doesn't" bug from S25 mobile testing.
+                // ═══════════════════════════════════════════════════════════════════
+                if (preItemRow && channel !== 'treasuremarts') {
+                    // Post-trigger fetch — authoritative qty values after cascade.
+                    const { data: postItemRow, error: postErr } = await sbClient
+                        .from('items').select('id, etsy_qty, wix_qty, wayfair_qty').eq('sku', item.sku).single();
+
+                    if (postErr || !postItemRow) {
+                        console.warn('[Sync Queue] Post-trigger fetch failed:', postErr?.message);
+                    } else {
+                        const saleQueueRows = [];
+
+                        if (preItemRow.etsy_listing_id) {
+                            saleQueueRows.push({
+                                item_id:  postItemRow.id,
+                                channel:  'etsy',
+                                operation:'update',
+                                fields: {
+                                    sku:         item.sku,
+                                    productName: item.productName || '',
+                                    quantity:    postItemRow.etsy_qty || 0,
+                                    listingId:   preItemRow.etsy_listing_id,
+                                    fieldTypes:  ['quantity'],
+                                    trigger:     'mobile_sale'
+                                }
+                            });
+                        }
+                        if (preItemRow.wix_product_id) {
+                            saleQueueRows.push({
+                                item_id:  postItemRow.id,
+                                channel:  'wix',
+                                operation:'update',
+                                fields: {
+                                    sku:         item.sku,
+                                    productName: item.productName || '',
+                                    quantity:    postItemRow.wix_qty || 0,
+                                    productId:   preItemRow.wix_product_id,
+                                    fieldTypes:  ['quantity'],
+                                    trigger:     'mobile_sale'
+                                }
+                            });
+                        }
+                        if (preItemRow.wayfair_sku) {
+                            // v4.3: NO "channel === 'wayfair'" gate — push on every online sale
+                            // because ECOSYSTEM-011 peer-decrement means wayfair_qty changed.
+                            saleQueueRows.push({
+                                item_id:  postItemRow.id,
+                                channel:  'wayfair',
+                                operation:'update',
+                                fields: {
+                                    sku:         item.sku,
+                                    productName: item.productName || '',
+                                    quantity:    postItemRow.wayfair_qty || 0,
+                                    wayfairSku:  preItemRow.wayfair_sku,
+                                    fieldTypes:  ['quantity'],
+                                    trigger:     'mobile_sale'
+                                }
+                            });
+                        }
+
+                        if (saleQueueRows.length > 0) {
+                            sbClient.from('sync_queue').insert(saleQueueRows).then(res => {
+                                if (res.error) console.error('[Sync Queue] Mobile sale queue error:', res.error.message);
+                                else console.log(`[Sync Queue] Mobile sale: ${saleQueueRows.length} channel update(s) queued for ${item.sku}`);
+                            });
+                        }
                     }
                 }
 
@@ -1316,6 +1331,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                 shelfLocation: row.shelf_location || '',
                 comments:    row.comments     || '',
                 isActive:    row.is_active !== false,
+                isBundle:    row.is_bundle === true,  // v4.3 — needed for ECOSYSTEM-011 bundle skip
 
                 // ── Quantities ────────────────────────────────────────────────────────
                 qty: row.qty || 0,
@@ -1783,27 +1799,55 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
 
             if (qtySold > curQty && !confirm('Only ' + curQty + ' in ' + channel + '. Proceed?')) return;
 
-            // ── Optimistic local update so UI refreshes immediately ──
-            // The DB trigger is the authoritative source; this just keeps the display responsive.
+            // ═══════════════════════════════════════════════════════════════════
+            // OPTIMISTIC LOCAL UPDATE — UI refresh only. DB trigger is authoritative.
+            // @invariant ECOSYSTEM-011 (peer-decrement on every sale)
+            // @invariant ECOSYSTEM-001 (Model B — warehouse_qty = total owned)
+            // @invariant ECOSYSTEM-002 (NO Etsy↔Wix mirror — each peer tracks own qty)
+            //
+            // Online sale:
+            //   - warehouse_qty decrements
+            //   - source channel decrements
+            //   - every online peer decrements 1:1 (unless bundle parent)
+            //   - TM untouched
+            // TM sale (Model B):
+            //   - warehouse_qty decrements (total owned now one less)
+            //   - TM decrements
+            //   - online peers untouched
+            //
+            // Bundles skip peer-decrement (symmetric to trigger). PWA loadFromSupabase
+            // re-pulls in 1.5s so any optimistic drift self-corrects.
+            // DO NOT REMOVE peer-decrement without bumping all cascade paths in lockstep.
+            // ═══════════════════════════════════════════════════════════════════
+            const oldWh    = parseInt(currentItem.qty) || 0;
+            const newWh    = Math.max(0, oldWh - qtySold);
+            const isBundle = currentItem.isBundle === true;
+
             if (channel === 'treasuremarts') {
-                // TM is a physical separate pool — only decrement TM, warehouse untouched
-                currentItem.channels = { ...currentItem.channels, treasuremarts: Math.max(0, curQty - qtySold) };
-            } else {
-                // Online channels share the warehouse pool
-                const oldWh  = parseInt(currentItem.qty) || 0;
-                const newWh  = Math.max(0, oldWh - qtySold);
-                const newChQ = Math.max(0, curQty - qtySold);
-                // Mirror Etsy ↔ Wix
-                const newEtsy = channel === 'etsy' ? newChQ : channel === 'wix' ? newChQ : Math.min(ch.etsy || 0, newWh);
-                const newWix  = channel === 'wix'  ? newChQ : channel === 'etsy'? newChQ : Math.min(ch.wix  || 0, newWh);
-                currentItem.qty      = newWh;
+                // Model B: both warehouse and TM decrement; online peers untouched.
+                currentItem.qty = newWh;
                 currentItem.channels = {
                     ...currentItem.channels,
-                    [channel]:    newChQ,
-                    etsy:         newEtsy,
-                    wix:          newWix,
-                    wayfair:      Math.min(ch.wayfair || 0, newWh),
+                    treasuremarts: Math.max(0, curQty - qtySold),
                 };
+            } else {
+                // Online sale — ECOSYSTEM-011 peer-decrement across all online channels.
+                currentItem.qty = newWh;
+                if (isBundle) {
+                    // Bundle parent: source decrements, peers untouched.
+                    currentItem.channels = {
+                        ...currentItem.channels,
+                        [channel]: Math.max(0, curQty - qtySold),
+                    };
+                } else {
+                    currentItem.channels = {
+                        ...currentItem.channels,
+                        etsy:    Math.max(0, (ch.etsy    || 0) - qtySold),
+                        wix:     Math.max(0, (ch.wix     || 0) - qtySold),
+                        wayfair: Math.max(0, (ch.wayfair || 0) - qtySold),
+                        // treasuremarts untouched on online sales
+                    };
+                }
             }
 
             logActivity('ITEM_SOLD', { sku: currentItem.sku, channel, qtySold, salePrice });
@@ -2771,7 +2815,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
         }
 
         // ============================================================================
-        // REVERSE SALE (v4.2)
+        // REVERSE SALE (v4.3 — ECOSYSTEM-011 symmetric peer-increment + Model B TM)
         // ============================================================================
         async function reverseSaleMobile(idx) {
             const sale = salesHistoryCache && salesHistoryCache[idx];
@@ -2800,25 +2844,50 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                 }).eq('id', sale.id);
                 if (saleErr) throw new Error('Failed to mark sale: ' + saleErr.message);
 
-                // 2. Fetch fresh item data
+                // 2. Fetch fresh item data (v4.3 — include is_bundle for ECOSYSTEM-011 skip)
                 const { data: freshItem, error: fetchErr } = await sbClient.from('items')
-                    .select('id,qty,etsy_qty,wix_qty,wayfair_qty,treasuremarts_qty,etsy_listing_id,etsy_variant_id,wix_product_id,wix_variant_id,wayfair_sku')
+                    .select('id,qty,etsy_qty,wix_qty,wayfair_qty,treasuremarts_qty,is_bundle,etsy_listing_id,etsy_variant_id,wix_product_id,wix_variant_id,wayfair_sku')
                     .eq('sku', sku).limit(1).single();
                 if (fetchErr || !freshItem) throw new Error('Item not found: ' + sku);
 
-                // 3. Restore quantities
-                const pi = v => parseInt(v) || 0;
-                const qtyUpdates = { qty: pi(freshItem.qty) + qty };
+                // 3. Restore quantities — ECOSYSTEM-011 symmetric peer-increment.
+                // ═══════════════════════════════════════════════════════════════════
+                // @invariant ECOSYSTEM-011 (reverse direction)
+                //   Reversing a sale mirrors the forward cascade:
+                //     - Online reverse: wh++, source++, all online peers++ (unless bundle)
+                //     - TM reverse (Model B): wh++, tm++, online peers untouched
+                //   Bundle parents skip peer-increment (symmetric to forward skip).
+                // @invariant ECOSYSTEM-001 (Model B — wh includes TM units)
+                // DO NOT REMOVE without updating all cascade paths in lockstep.
+                // ═══════════════════════════════════════════════════════════════════
+                const pi       = v => parseInt(v) || 0;
+                const isBundle = freshItem.is_bundle === true;
+                const qtyUpdates = {};
 
-                const chMap = { etsy:'etsy_qty', wix:'wix_qty', wayfair:'wayfair_qty', treasuremarts:'treasuremarts_qty' };
-                if (chMap[channel]) {
-                    qtyUpdates[chMap[channel]] = pi(freshItem[chMap[channel]]) + qty;
-                }
-                // Etsy/Wix cross-restore
-                if (channel === 'etsy' && freshItem.wix_product_id) {
-                    qtyUpdates.wix_qty = pi(freshItem.wix_qty) + qty;
-                } else if (channel === 'wix' && freshItem.etsy_listing_id) {
-                    qtyUpdates.etsy_qty = pi(freshItem.etsy_qty) + qty;
+                if (channel === 'treasuremarts') {
+                    // Model B reverse: both qty and TM increment; online peers untouched.
+                    qtyUpdates.qty               = pi(freshItem.qty)               + qty;
+                    qtyUpdates.treasuremarts_qty = pi(freshItem.treasuremarts_qty) + qty;
+                } else if (channel === 'etsy' || channel === 'wix' || channel === 'wayfair') {
+                    // Online reverse: warehouse + source + all online peers (symmetric).
+                    qtyUpdates.qty = pi(freshItem.qty) + qty;
+                    if (isBundle) {
+                        // Bundle parent: only source channel increments.
+                        const chMap = { etsy:'etsy_qty', wix:'wix_qty', wayfair:'wayfair_qty' };
+                        qtyUpdates[chMap[channel]] = pi(freshItem[chMap[channel]]) + qty;
+                    } else {
+                        qtyUpdates.etsy_qty    = pi(freshItem.etsy_qty)    + qty;
+                        qtyUpdates.wix_qty     = pi(freshItem.wix_qty)     + qty;
+                        qtyUpdates.wayfair_qty = pi(freshItem.wayfair_qty) + qty;
+                        // treasuremarts untouched
+                    }
+                } else {
+                    // Unknown channel — conservative fallback (restore wh + source if mappable).
+                    qtyUpdates.qty = pi(freshItem.qty) + qty;
+                    const chMap = { etsy:'etsy_qty', wix:'wix_qty', wayfair:'wayfair_qty', treasuremarts:'treasuremarts_qty' };
+                    if (chMap[channel]) {
+                        qtyUpdates[chMap[channel]] = pi(freshItem[chMap[channel]]) + qty;
+                    }
                 }
 
                 // 4. Write qty update
