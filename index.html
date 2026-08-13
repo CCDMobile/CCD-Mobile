@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
 ================================================================================
-CCD MOBILE INVENTORY MODULE v4.3-Supabase
+CCD MOBILE INVENTORY MODULE v4.3.1-Supabase
 ================================================================================
 Pure display terminal backed by Supabase. Desktop CCD-INVENTORY-SYSTEM.html
 is the ONLY calculation engine. Mobile reads stored values — never calculates
@@ -1121,9 +1121,33 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
             applyFilters(); updateStats();
         }
 
+        // ================================================================
+        // v4.3.1 (REG S76-01): PostgREST caps every response at 1000 rows.
+        // loadFromSupabase() previously ran a bare .select('*') with no limit
+        // or range, so once the catalog passed 1000 items it SILENTLY returned
+        // a partial list - no error, just missing rows. Items past #1000 in
+        // SKU order were invisible to search, to qty adjustment, and to every
+        // whole-list operation. Catalog was ~1050 when found; Christmas intake
+        // takes it to ~1750.
+        //
+        // Identical helper to CCD-INVENTORY-V2 v2.9.41 - keep them in sync.
+        // @invariant every full-table read goes through sbFetchAll().
+        // ================================================================
+        async function sbFetchAll(makeQuery, pageSize = 1000) {
+            let all = [], offset = 0;
+            for (;;) {
+                const { data, error } = await makeQuery().range(offset, offset + pageSize - 1);
+                if (error) throw error;
+                if (!data || !data.length) break;
+                all = all.concat(data);
+                if (data.length < pageSize) break;
+                offset += pageSize;
+            }
+            return all;
+        }
+
         async function loadFromSupabase() {
-            const { data, error } = await sbClient.from('items').select('*').order('sku');
-            if (error) throw error;
+            const data = await sbFetchAll(() => sbClient.from('items').select('*').order('sku'));
             inventory = (data || []).map(sbRowToItem);
             applyFilters(); updateStats();
             lastSyncTime = new Date();
