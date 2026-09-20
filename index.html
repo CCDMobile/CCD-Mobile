@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
 ================================================================================
-CCD MOBILE INVENTORY MODULE v4.4.0-Supabase
+CCD MOBILE INVENTORY MODULE v4.4.1-Supabase
 ================================================================================
 Pure display terminal backed by Supabase. Desktop CCD-INVENTORY-SYSTEM.html
 is the ONLY calculation engine. Mobile reads stored values — never calculates
@@ -14,6 +14,9 @@ v4.4.0 (S103): joins Inventory V2's write contract — sales through
       'v2' with variant IDs, Crazy Chicks room in / TreasureMarts out of selling,
       Sets & bundles refused, no offline writes, Crazy Chicks room audit.
       Design: claude\CCD-S103-Mobile-Design.md
+v4.4.1 (S103, Paul): everyday functions on a quick-action bar under the header;
+      Settings holds only the connection, opens only after the PIN, and
+      Disconnect asks first (it removes the saved key from this phone).
 ================================================================================
 -->
 <html lang="en">
@@ -333,6 +336,10 @@ v4.4.0 (S103): joins Inventory V2's write contract — sales through
         .badge-wayfair    { background: #FEF9C3; color: #854D0E; }
         .badge-treasuremarts { background: #DCFCE7; color: #14532D; }
         .badge-crazychicks { background: #FCE7F3; color: #9D174D; }
+        .quick-bar { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; padding: 10px 12px 0; }
+        .quick-btn { border: none; border-radius: 12px; padding: 10px 4px; font-size: 12px; font-weight: 600; color: white; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 4px; line-height: 1.1; }
+        .quick-btn span:first-child { font-size: 20px; }
+        .quick-btn:active { opacity: 0.8; }
         .result-bar { display: none; margin: 8px 12px 0; padding: 10px 12px; border-radius: 10px; font-size: 13px; line-height: 1.35; align-items: flex-start; gap: 8px; background: #F0FDF4; border: 1px solid #A7F3D0; color: #065F46; }
         .result-bar.show { display: flex; }
         .result-bar.warning { background: #FFFBEB; border-color: #FCD34D; color: #92400E; }
@@ -438,9 +445,7 @@ v4.4.0 (S103): joins Inventory V2's write contract — sales through
             <div class="header-top">
                 <div class="header-title">🐮 CCD Inventory</div>
                 <div class="header-actions">
-                    <button class="header-btn" onclick="showWriteoffs()" title="Write-Offs">📋</button>
-                    <button class="header-btn" onclick="showSalesHistory()" title="Sales History">📈</button>
-                    <button class="header-btn" onclick="showSettings()" title="Settings">⚙️</button>
+                    <button class="header-btn" onclick="openSettingsWithPin()" title="Settings (PIN)">⚙️</button>
                 </div>
             </div>
             <div class="sync-status" id="syncStatus">
@@ -456,6 +461,13 @@ v4.4.0 (S103): joins Inventory V2's write contract — sales through
             <button class="offline-banner-dismiss" onclick="document.getElementById('offlineBanner').classList.remove('visible')" title="Dismiss">×</button>
         </div>
 
+        <!-- v4.4.1: everyday functions, one tap from the home screen (Paul, S103) -->
+        <div class="quick-bar" id="quickBar">
+            <button class="quick-btn" style="background:#DB2777;" onclick="showRoomAudit()"><span>🐥</span><span>Chicks Audit</span></button>
+            <button class="quick-btn" style="background:#059669;" onclick="showSalesHistory()"><span>📈</span><span>Sales</span></button>
+            <button class="quick-btn" style="background:#7C3AED;" onclick="showWriteoffs()"><span>📋</span><span>Write-offs</span></button>
+            <button class="quick-btn" style="background:#475569;" onclick="showActivityLog()"><span>📜</span><span>Activity</span></button>
+        </div>
         <div class="result-bar" id="resultBar"><span id="resultText"></span><button onclick="hideResult()" title="Dismiss">×</button></div>
 
         <div class="search-bar">
@@ -596,14 +608,11 @@ v4.4.0 (S103): joins Inventory V2's write contract — sales through
                 </div>
                 <div class="settings-section">
                     <div class="settings-section-title">Actions</div>
-                    <button class="settings-button" onclick="showRoomAudit()" style="background: #DB2777; color: white;">🐥 Crazy Chicks Room Audit</button>
-                    <button class="settings-button" onclick="showSalesHistory()">📈 Sales History</button>
-                    <button class="settings-button" onclick="showActivityLog()">📋 View Activity Log</button>
                     <button class="settings-button danger" onclick="confirmClearData()">🗑️ Clear Local Data</button>
                 </div>
                 <div class="settings-section">
                     <div class="settings-section-title">Version</div>
-                    <div class="settings-item"><div class="settings-item-label">App Version</div><div class="settings-item-value">v4.4.0 Supabase</div></div>
+                    <div class="settings-item"><div class="settings-item-label">App Version</div><div class="settings-item-value">v4.4.1 Supabase</div></div>
                 </div>
             </div>
         </div>
@@ -875,7 +884,7 @@ v4.4.0 (S103): joins Inventory V2's write contract — sales through
 
     <script>
         // ============================================================================
-        // CCD MOBILE v4.4.0 — SUPABASE EDITION (TOOL_VERSION below)
+        // CCD MOBILE v4.4.1 — SUPABASE EDITION (TOOL_VERSION below)
         // Pure display terminal. Desktop is the calculation engine.
         // Mobile reads stored values. Mobile never calculates prices.
         // ============================================================================
@@ -898,7 +907,7 @@ v4.4.0 (S103): joins Inventory V2's write contract — sales through
         // Crazy Chicks is a ROOM (Paul, S103). On screen it is "Crazy Chicks" or
         // "Chicks" — never "CC" (L-5).
         // ============================================================================
-        const TOOL_VERSION = '4.4.0';
+        const TOOL_VERSION = '4.4.1';
         const DEVICE_LABEL = 'Mobile-v' + TOOL_VERSION;
         const ROOM = 'crazychicks';
         const ROOM_LABEL = 'Crazy Chicks';
@@ -1332,6 +1341,8 @@ async function registerToolVersion(client, toolKey, toolVersion) {
         }
 
         function disconnectSupabase() {
+            // v4.4.1: removes the saved key from this phone — ask first (Paul, S103).
+            if (!confirm('Disconnect?\n\nThis removes the saved database address and key from this phone. You will need the key to connect again.')) return;
             sbClient = null; sbConnected = false; isConnected = false;
             localStorage.removeItem('ccd_supabase_url');
             localStorage.removeItem('ccd_supabase_key');
@@ -2029,6 +2040,15 @@ async function registerToolVersion(client, toolKey, toolVersion) {
         // ============================================================================
         // SETTINGS, LOG, CLEAR DATA
         // ============================================================================
+
+        // v4.4.1 (S103, Paul): Settings holds the database key — opening it asks for the PIN again,
+        // so nobody wanders in and erases the key or changes the connection by accident.
+        function openSettingsWithPin() {
+            const p = prompt('Settings — enter the PIN');
+            if (p === null) return;
+            if (p !== CORRECT_PIN) { showToast('Wrong PIN — Settings not opened', 'error'); return; }
+            showSettings();
+        }
 
         function showSettings() {
             updateConnectionUI();
