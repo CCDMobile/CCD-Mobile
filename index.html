@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
 ================================================================================
-CCD MOBILE INVENTORY MODULE v4.3.1-Supabase
+CCD MOBILE INVENTORY MODULE v4.4.0-Supabase
 ================================================================================
 Pure display terminal backed by Supabase. Desktop CCD-INVENTORY-SYSTEM.html
 is the ONLY calculation engine. Mobile reads stored values — never calculates
@@ -9,6 +9,11 @@ prices, profit, margin, or cost.
 v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
       functions removed, offline queue replay engine implemented, CrazyChicks
       hidden (data layer kept), itemToSbRow minimal write-back only.
+v4.4.0 (S103): joins Inventory V2's write contract — sales through
+      calculate_sale_profit (not the trigger), writes by item id, pushes stamped
+      'v2' with variant IDs, Crazy Chicks room in / TreasureMarts out of selling,
+      Sets & bundles refused, no offline writes, Crazy Chicks room audit.
+      Design: claude\CCD-S103-Mobile-Design.md
 ================================================================================
 -->
 <html lang="en">
@@ -327,6 +332,14 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
         .badge-wix        { background: #E0F2FE; color: #0369A1; }
         .badge-wayfair    { background: #FEF9C3; color: #854D0E; }
         .badge-treasuremarts { background: #DCFCE7; color: #14532D; }
+        .badge-crazychicks { background: #FCE7F3; color: #9D174D; }
+        .result-bar { display: none; margin: 8px 12px 0; padding: 10px 12px; border-radius: 10px; font-size: 13px; line-height: 1.35; align-items: flex-start; gap: 8px; background: #F0FDF4; border: 1px solid #A7F3D0; color: #065F46; }
+        .result-bar.show { display: flex; }
+        .result-bar.warning { background: #FFFBEB; border-color: #FCD34D; color: #92400E; }
+        .result-bar.error { background: #FEF2F2; border-color: #FECACA; color: #991B1B; }
+        .result-bar button { margin-left: auto; background: none; border: none; font-size: 18px; color: inherit; cursor: pointer; }
+        .role-lock { display: none; margin-bottom: 12px; padding: 10px; border-radius: 8px; background: #EEF2FF; color: #3730A3; font-size: 13px; }
+        .tm-closed { display: none; font-size: 12px; color: #6B7280; margin-top: 6px; }
         .badge-other      { background: var(--bg); color: var(--text-light); }
 
         /* ── FINANCIAL DISPLAY PANEL ── */
@@ -439,9 +452,11 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
         <!-- ── OFFLINE BANNER ── -->
         <div class="offline-banner" id="offlineBanner">
             <span class="offline-banner-icon">📡</span>
-            <span class="offline-banner-text">Offline — changes will sync when reconnected</span>
+            <span class="offline-banner-text">Offline — nothing can be saved until you are connected again</span>
             <button class="offline-banner-dismiss" onclick="document.getElementById('offlineBanner').classList.remove('visible')" title="Dismiss">×</button>
         </div>
+
+        <div class="result-bar" id="resultBar"><span id="resultText"></span><button onclick="hideResult()" title="Dismiss">×</button></div>
 
         <div class="search-bar">
             <input type="text" class="search-input" id="searchInput" placeholder="Search SKU, Product, or Brand..." oninput="applyFilters()">
@@ -467,14 +482,14 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
             </button>
         </div>
 
-        <!-- ── CHANNEL FILTER BAR ── (CrazyChicks intentionally absent — retired channel) -->
+        <!-- ── CHANNEL FILTER BAR ── v4.4.0: Crazy Chicks room in, TreasureMarts out (closed 2026-09-20) -->
         <div class="filter-bar" id="filterBar">
             <span class="filter-label">Filter:</span>
             <button class="filter-pill active" id="fpAll"           onclick="setChannelFilter('all')">All</button>
             <button class="filter-pill"        id="fpEtsy"          onclick="setChannelFilter('etsy')">🏷 Etsy</button>
             <button class="filter-pill"        id="fpWix"           onclick="setChannelFilter('wix')">🌐 Wix</button>
             <button class="filter-pill"        id="fpWayfair"       onclick="setChannelFilter('wayfair')">🏠 Wayfair</button>
-            <button class="filter-pill"        id="fpTreasureMarts" onclick="setChannelFilter('treasuremarts')">💎 TM</button>
+            <button class="filter-pill"        id="fpCrazyChicks"   onclick="setChannelFilter('crazychicks')">🐥 Chicks</button>
             <div class="filter-divider"></div>
             <button class="filter-pill low-stock" id="fpLowStock"   onclick="toggleLowStock()">⚠️ Low/Zero</button>
         </div>
@@ -494,11 +509,12 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
         <div class="modal-content">
             <div class="modal-header"><div class="modal-title">Edit Item</div><button class="modal-close" onclick="closeItemModal()">×</button></div>
             <div class="modal-body">
+                <div class="role-lock" id="roleLock"></div>
                 <div class="form-group"><label class="form-label">Product Name</label><input type="text" class="form-input" id="editProductName"></div>
                 <div class="form-group"><label class="form-label">SKU <span class="readonly-badge">Read Only</span></label><input type="text" class="form-input" id="editSku" readonly></div>
                 <div class="form-group"><label class="form-label">Brand</label><input type="text" class="form-input" id="editBrand"></div>
                 <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 20px; align-items: end;">
-                    <div><label class="form-label">Warehouse</label><input type="number" class="form-input" id="editQty" min="0" style="font-weight: 600; font-size: 18px;"></div>
+                    <div><label class="form-label">Warehouse</label><input type="number" class="form-input" id="editQty" min="0" style="font-weight: 600; font-size: 18px;" oninput="updateTotalQty()"></div>
                     <div><label class="form-label">Wholesale $ <span class="readonly-badge">RO</span></label><input type="number" class="form-input" id="editWholesalePrice" min="0" step="0.01" readonly></div>
                     <div><label class="form-label">Retail $ <span class="readonly-badge">RO</span></label><input type="number" class="form-input" id="editRetailPrice" min="0" step="0.01" readonly></div>
                 </div>
@@ -508,9 +524,10 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                         <div class="channel-input-group"><label class="channel-input-label">Etsy</label><input type="number" class="channel-input" id="editEtsy" min="0" oninput="updateTotalQty()"></div>
                         <div class="channel-input-group"><label class="channel-input-label">Wix</label><input type="number" class="channel-input" id="editWix" min="0" oninput="updateTotalQty()"></div>
                         <div class="channel-input-group"><label class="channel-input-label">Wayfair</label><input type="number" class="channel-input" id="editWayfair" min="0" oninput="updateTotalQty()"></div>
-                        <div class="channel-input-group"><label class="channel-input-label">TreasureMarts</label><input type="number" class="channel-input" id="editTreasureMarts" min="0" oninput="updateTotalQty()"></div>
+                        <div class="channel-input-group"><label class="channel-input-label">Crazy Chicks</label><input type="number" class="channel-input" id="editCrazyChicks" min="0" oninput="updateTotalQty()"></div>
                     </div>
-                    <div class="total-qty-display"><div style="font-size: 13px;">Allocated: <span id="totalQtyDisplay" style="font-weight: 600;">0</span></div></div>
+                    <div class="total-qty-display"><div style="font-size: 13px;">Available online: <span id="totalQtyDisplay" style="font-weight: 600;">0</span></div></div>
+                    <div class="tm-closed" id="tmClosedNote"></div>
                 </div>
                 <div class="form-group"><label class="form-label">Comments</label><input type="text" class="form-input" id="editComments" placeholder="Add notes about this item..."></div>
 
@@ -567,7 +584,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                     </div>
                     <div style="margin-bottom: 10px;">
                         <label style="font-size: 13px; color: #6B7280; display: block; margin-bottom: 4px;">Anon Key</label>
-                        <input type="text" id="sbKeyInput" placeholder="eyJ..." style="width: 100%; padding: 10px; border: 2px solid #E5E7EB; border-radius: 8px; font-size: 14px; font-family: monospace; box-sizing: border-box;">
+                        <input type="password" autocomplete="off" id="sbKeyInput" placeholder="eyJ..." style="width: 100%; padding: 10px; border: 2px solid #E5E7EB; border-radius: 8px; font-size: 14px; font-family: monospace; box-sizing: border-box;">
                     </div>
                     <button class="onedrive-btn" id="connectBtn" onclick="connectSupabase()" style="background: #6366F1;"><span>🔗</span><span>Connect to Database</span></button>
                     <button class="onedrive-btn disconnect" id="disconnectBtn" style="display: none;" onclick="disconnectSupabase()"><span>🔌</span><span>Disconnect</span></button>
@@ -579,14 +596,14 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                 </div>
                 <div class="settings-section">
                     <div class="settings-section-title">Actions</div>
-                    <button class="settings-button" onclick="showTreasureMartReport()" style="background: #10B981; color: white;">📊 TreasureMart Report</button>
+                    <button class="settings-button" onclick="showRoomAudit()" style="background: #DB2777; color: white;">🐥 Crazy Chicks Room Audit</button>
                     <button class="settings-button" onclick="showSalesHistory()">📈 Sales History</button>
                     <button class="settings-button" onclick="showActivityLog()">📋 View Activity Log</button>
                     <button class="settings-button danger" onclick="confirmClearData()">🗑️ Clear Local Data</button>
                 </div>
                 <div class="settings-section">
                     <div class="settings-section-title">Version</div>
-                    <div class="settings-item"><div class="settings-item-label">App Version</div><div class="settings-item-value">v4.3 Supabase</div></div>
+                    <div class="settings-item"><div class="settings-item-label">App Version</div><div class="settings-item-value">v4.4.0 Supabase</div></div>
                 </div>
             </div>
         </div>
@@ -607,7 +624,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
     <div class="modal" id="treasureMartModal" onclick="closeTreasureMartModalOutside(event)">
         <div class="modal-content" style="max-width: 600px; max-height: 95vh;">
             <div class="modal-header" style="background: linear-gradient(135deg, #10B981 0%, #059669 100%); color: white;">
-                <div class="modal-title">📊 TreasureMart Inventory Audit</div>
+                <div class="modal-title">🐥 Crazy Chicks Room Audit</div>
                 <button class="modal-close" onclick="closeTreasureMartModal()" style="color: white;">×</button>
             </div>
             <div class="modal-body" style="padding: 0;">
@@ -700,7 +717,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                         <option value="etsy">Etsy</option>
                         <option value="wix">Wix</option>
                         <option value="wayfair">Wayfair</option>
-                        <option value="treasuremarts">TreasureMarts</option>
+                        <option value="crazychicks">Crazy Chicks room</option>
                     </select>
                 </div>
                 <div class="sale-form-row">
@@ -726,7 +743,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                 <div class="form-group"><label class="form-label">SKU *</label><input type="text" class="form-input" id="newSku" placeholder="e.g. RBD-001" style="text-transform: uppercase;"></div>
                 <div class="form-group"><label class="form-label">Brand</label><input type="text" class="form-input" id="newBrand" placeholder="e.g. Country Charm"></div>
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 20px;">
-                    <div><label class="form-label">Qty *</label><input type="number" class="form-input" id="newQty" min="0" value="1" style="font-weight: 600;"></div>
+                    <div><label class="form-label">Qty *</label><input type="number" class="form-input" id="newQty" min="0" value="1" style="font-weight: 600;" oninput="updateNewItemTotal()"></div>
                     <div><label class="form-label">Shelf #</label><input type="text" class="form-input" id="newShelf" placeholder="e.g. A-12"></div>
                 </div>
                 <div class="form-group">
@@ -735,9 +752,9 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                         <div class="channel-input-group"><label class="channel-input-label">Etsy</label><input type="number" class="channel-input" id="newEtsy" min="0" value="0" oninput="updateNewItemTotal()"></div>
                         <div class="channel-input-group"><label class="channel-input-label">Wix</label><input type="number" class="channel-input" id="newWix" min="0" value="0" oninput="updateNewItemTotal()"></div>
                         <div class="channel-input-group"><label class="channel-input-label">Wayfair</label><input type="number" class="channel-input" id="newWayfair" min="0" value="0" oninput="updateNewItemTotal()"></div>
-                        <div class="channel-input-group"><label class="channel-input-label">TreasureMarts</label><input type="number" class="channel-input" id="newTreasureMarts" min="0" value="0" oninput="updateNewItemTotal()"></div>
+                        <div class="channel-input-group"><label class="channel-input-label">Crazy Chicks</label><input type="number" class="channel-input" id="newCrazyChicks" min="0" value="0" oninput="updateNewItemTotal()"></div>
                     </div>
-                    <div class="total-qty-display">Allocated: <span id="newItemTotalQty" style="font-weight: 600;">0</span></div>
+                    <div class="total-qty-display">Available online: <span id="newItemTotalQty" style="font-weight: 600;">0</span></div>
                 </div>
                 <div style="background: #FFF7ED; border: 1px solid #FED7AA; border-radius: 8px; padding: 10px; margin-bottom: 20px; font-size: 12px; color: #92400E;">
                     💡 Wholesale, retail, and pricing will be set by the desktop after saving.
@@ -765,7 +782,8 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                         <option value="etsy">Etsy</option>
                         <option value="wix">Wix</option>
                         <option value="wayfair">Wayfair</option>
-                        <option value="treasuremarts">TreasureMarts</option>
+                        <option value="crazychicks">Crazy Chicks</option>
+                        <option value="treasuremarts">TreasureMarts (closed)</option>
                     </select>
                     <select id="shLimitFilter" onchange="loadSalesHistory()" style="padding: 6px 10px; border: 1px solid #D1FAE5; border-radius: 8px; font-size: 13px; background: white; flex: 1; min-width: 100px;">
                         <option value="25">Last 25</option>
@@ -843,7 +861,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                 </div>
                 <div class="form-group"><label class="form-label">Location</label>
                     <select class="form-input" id="woLocation">
-                        <option>Warehouse</option><option>TreasureMarts</option><option>In Transit</option><option>Customer</option>
+                        <option>Warehouse</option><option>Crazy Chicks</option><option>In Transit — Inbound</option><option>In Transit — Outbound</option><option>Missing</option><option>Customer</option>
                     </select>
                 </div>
                 <div class="form-group"><label class="form-label">Notes (optional)</label><input type="text" class="form-input" id="woNotes" placeholder="Additional details..."></div>
@@ -857,12 +875,248 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
 
     <script>
         // ============================================================================
-        // CCD MOBILE v4.3 — SUPABASE EDITION
+        // CCD MOBILE v4.4.0 — SUPABASE EDITION (TOOL_VERSION below)
         // Pure display terminal. Desktop is the calculation engine.
         // Mobile reads stored values. Mobile never calculates prices.
         // ============================================================================
 
         const CORRECT_PIN = '1234';
+
+        // ============================================================================
+        // v4.4.0 (S103) — THE PHONE JOINS V2'S WRITE CONTRACT
+        // Before v4.4.0 every stock change went through the sale TRIGGER or wrote the
+        // whole cached row. Now, exactly like Inventory V2 2.9.74:
+        //   · every write re-reads the item BY ID first (REG S92-01) and writes only
+        //     the columns it changes;
+        //   · a sale's fees come from calculate_sale_profit (ECOSYSTEM-018) and the
+        //     trigger is skipped (qty_handled left NULL);
+        //   · every channel quantity that moves goes through queueChannelQtyDeltas —
+        //     copied VERBATIM from V2 below — so it is pushed headless (_source 'v2')
+        //     with its variant IDs, or announced durably when it has no channel ID;
+        //   · Sets and bundles are refused before anything is written (Paul, S103);
+        //   · nothing is written offline (Paul, S103 D1).
+        // Crazy Chicks is a ROOM (Paul, S103). On screen it is "Crazy Chicks" or
+        // "Chicks" — never "CC" (L-5).
+        // ============================================================================
+        const TOOL_VERSION = '4.4.0';
+        const DEVICE_LABEL = 'Mobile-v' + TOOL_VERSION;
+        const ROOM = 'crazychicks';
+        const ROOM_LABEL = 'Crazy Chicks';
+        const SALE_CHANNELS = ['etsy', 'wix', 'wayfair', ROOM];
+        const ONLINE_CHANNELS = ['etsy', 'wix', 'wayfair'];
+        const CH_QTY_COL = { etsy: 'etsy_qty', wix: 'wix_qty', wayfair: 'wayfair_qty', treasuremarts: 'treasuremarts_qty', crazychicks: 'crazychicks_qty' };
+        const CH_LABEL = { etsy: 'Etsy', wix: 'Wix', wayfair: 'Wayfair', treasuremarts: 'TreasureMarts', crazychicks: ROOM_LABEL };
+        const ITEM_COLS = 'id,sku,product_name,brand_name,comments,item_role,is_bundle,is_active,qty,etsy_qty,wix_qty,wayfair_qty,treasuremarts_qty,crazychicks_qty,etsy_listing_id,etsy_variant_id,wix_product_id,wix_variant_id,wayfair_sku,wholesale_price,ib_shipping,tariff,ob_shipping';
+
+        function pi(v) { return parseInt(v) || 0; }
+        function pf(v) { return parseFloat(v) || 0; }
+
+        // A Set or bundle: item_role 'set'/'bundle' (the family engine) or the legacy
+        // is_bundle flag. Works on a cached item (itemRole/isBundle) or a DB row.
+        function isComposite(x) {
+            if (!x) return false;
+            const role = x.itemRole !== undefined ? x.itemRole : x.item_role;
+            const legacy = x.isBundle !== undefined ? x.isBundle : x.is_bundle;
+            return role === 'set' || role === 'bundle' || legacy === true;
+        }
+        function compositeRefusal(sku) {
+            return (sku || 'This item') + ' is a Set/bundle — sell, adjust or write it off in Inventory V2. Nothing was changed.';
+        }
+
+        // D1: no offline writes. Every write path calls this first.
+        function requireOnline() {
+            if (!sbClient || !sbConnected || !navigator.onLine) {
+                showToast('Not connected — nothing was saved. Try again when online.', 'error');
+                return false;
+            }
+            return true;
+        }
+
+        async function fetchItemRow(id) {
+            const { data, error } = await sbClient.from('items').select(ITEM_COLS).eq('id', id).limit(1).single();
+            if (error || !data) throw new Error('Could not read the item from the database' + (error ? ': ' + error.message : ''));
+            return data;
+        }
+
+        // Re-read one item after a write and put the fresh row into the list.
+        async function refreshItem(id) {
+            try {
+                const { data } = await sbClient.from('items').select('*').eq('id', id).limit(1).single();
+                if (!data) return;
+                const fresh = sbRowToItem(data);
+                const ix = inventory.findIndex(i => String(i.id) === String(id));
+                if (ix >= 0) inventory[ix] = fresh; else inventory.push(fresh);
+                applyFilters(); updateStats();
+            } catch (e) { console.warn('[refreshItem]', e.message); }
+        }
+
+        // The online cap after a change: every online channel <= warehouse − TreasureMarts − Crazy Chicks
+        // (V2 saveItem L7934, confirmSell L8733, recordWriteoff L9072). Caps AT available, never
+        // raises TO it — Etsy/Wix are kept low on purpose (S92 scarcity rule).
+        function capOnline(updates, row) {
+            const wh = updates.qty !== undefined ? pi(updates.qty) : pi(row.qty);
+            const tm = updates.treasuremarts_qty !== undefined ? pi(updates.treasuremarts_qty) : pi(row.treasuremarts_qty);
+            const cc = updates.crazychicks_qty !== undefined ? pi(updates.crazychicks_qty) : pi(row.crazychicks_qty);
+            const avail = Math.max(0, wh - tm - cc);
+            const capped = [];
+            for (const ch of ONLINE_CHANNELS) {
+                const col = CH_QTY_COL[ch];
+                const cur = updates[col] !== undefined ? pi(updates[col]) : pi(row[col]);
+                if (cur > avail) { updates[col] = avail; capped.push(CH_LABEL[ch] + ' ' + cur + '→' + avail); }
+            }
+            return capped;
+        }
+
+        function queueOutcomeText(r) { return chqText(r); }
+
+        // ── COPIED FROM INVENTORY V2 2.9.74 (md5 1451b542…), L10644-10763, VERBATIM ──
+        // The ONLY change: the Supabase client is `sbClient` here (V2 names it `sb`).
+        // Do not edit this block by hand — re-copy it from V2 if V2's changes.
+const CHQ_PUSHABLE = [
+  { key: 'etsy',    label: 'Etsy',    qtyCol: 'etsy_qty',    idCol: 'etsy_listing_id' },
+  { key: 'wix',     label: 'Wix',     qtyCol: 'wix_qty',     idCol: 'wix_product_id' },
+  { key: 'wayfair', label: 'Wayfair', qtyCol: 'wayfair_qty', idCol: 'wayfair_sku' }
+];
+// Booths have no proxy and no push path at all. A booth quantity moving is not
+// a defect — but it changes available-online, so it is RECORDED rather than
+// ignored, otherwise the log cannot explain why an online cap moved.
+const CHQ_BOOTHS = [
+  { key: 'tm', label: 'TreasureMarts', qtyCol: 'treasuremarts_qty' },
+  { key: 'cc', label: 'Crazy Chicks',  qtyCol: 'crazychicks_qty' }
+];
+const CHQ_COLS = 'id,sku,qty,etsy_qty,wix_qty,wayfair_qty,treasuremarts_qty,crazychicks_qty,etsy_listing_id,etsy_variant_id,wix_product_id,wix_variant_id,wayfair_sku';
+
+function chqHasId(ch, row) {
+  if (!row) return false;
+  const v = row[ch.idCol];
+  return v !== null && v !== undefined && String(v).trim() !== '';
+}
+
+// Resolved from the database, never from state (REG S92-01). Returns null on
+// any failure, and null is reported as UNVERIFIED rather than as "no change" —
+// a readiness indicator that cannot say UNKNOWN will say SAFE (REG S94-02).
+async function chqRead(itemId) {
+  if (!sbClient || !itemId) return null;
+  try {
+    const { data, error } = await sbClient.from('items').select(CHQ_COLS).eq('id', itemId).limit(1).single();
+    if (error) { console.warn('[ChannelQty] read failed:', error.message); return null; }
+    return data || null;
+  } catch(e) { console.warn('[ChannelQty] read threw:', e.message); return null; }
+}
+
+// The row shape is the one recordWriteoff already ships (L7801-7818) and the
+// bulk push already ships (L12594-12602). It is NOT re-derived here: operation
+// must be 'update' or sqStamp() refuses to stamp it, and an unstamped row is
+// Sync-Hub-only because NULL = ANY(...) is NULL, not true.
+function chqRowFor(ch, row, quantity, trigger) {
+  const fields = { sku: row.sku, quantity: pi(quantity), fieldTypes: ['quantity'], trigger: trigger };
+  if (ch.key === 'etsy') { fields.listingId = row.etsy_listing_id; if (row.etsy_variant_id) fields.etsyVariantId = row.etsy_variant_id; }
+  if (ch.key === 'wix') { fields.productId = row.wix_product_id; if (row.wix_variant_id) fields.wixVariantId = row.wix_variant_id; }
+  if (ch.key === 'wayfair') { fields.wayfairSku = row.wayfair_sku; }
+  return { item_id: row.id, channel: ch.key, operation: 'update', fields: fields, status: 'pending', created_at: new Date().toISOString() };
+}
+
+function chqText(r) {
+  if (!r) return 'channel push NOT VERIFIED';
+  const parts = [];
+  if (r.unknown) parts.push('⚠ channel push NOT VERIFIED — could not read the item before/after');
+  if (r.queued.length) parts.push(`queued ${r.queued.join(', ')}`);
+  if (r.error) parts.push(`⚠ QUEUE INSERT FAILED (${r.error}) — nothing was pushed`);
+  if (r.unpushable.length) parts.push(`⚠ NOT pushed, no channel ID: ${r.unpushable.join(', ')}`);
+  if (r.booth.length) parts.push(`booth only, no push exists: ${r.booth.join(', ')}`);
+  return parts.length ? parts.join(' · ') : 'no channel quantity changed';
+}
+
+// NEVER THROWS. The caller's row is already committed by the time this runs, so
+// throwing would turn a queue failure into a save that looks failed while
+// having succeeded — which is the v2.9.49 write-off bug that produced duplicate
+// write_offs rows. A failure here is reported, loudly, and returned.
+async function queueChannelQtyDeltas(before, after, trigger) {
+  const out = { queued: [], unpushable: [], booth: [], unknown: false, error: null };
+  if (!before || !after) {
+    out.unknown = true;
+    const sku = (after && after.sku) || (before && before.sku) || null;
+    if (sku) logActivity('INVENTORY','CHANNEL_QTY_UNVERIFIED',null,`Channel push NOT VERIFIED on ${sku} — the before/after read failed`,{ trigger: trigger },sku);
+    return out;
+  }
+  const rows = [], detail = {};
+  for (const ch of CHQ_PUSHABLE) {
+    const b = pi(before[ch.qtyCol]), a = pi(after[ch.qtyCol]);
+    if (b === a) continue;
+    detail[ch.key] = { before: b, after: a };
+    if (chqHasId(ch, after)) {
+      rows.push(chqRowFor(ch, after, a, trigger));
+      out.queued.push(`${ch.label} ${b}→${a}`);
+    } else {
+      out.unpushable.push(`${ch.label} ${b}→${a}`);
+    }
+  }
+  for (const ch of CHQ_BOOTHS) {
+    const b = pi(before[ch.qtyCol]), a = pi(after[ch.qtyCol]);
+    if (b === a) continue;
+    detail[ch.key] = { before: b, after: a };
+    out.booth.push(`${ch.label} ${b}→${a}`);
+  }
+  if (!out.queued.length && !out.unpushable.length && !out.booth.length) return out;
+  if (rows.length) {
+    try {
+      const { error } = await sbClient.from('sync_queue').insert(sqStamp(rows));
+      if (error) {
+        out.error = error.message;
+        out.queued = [];
+        console.warn('[ChannelQty] sync_queue insert failed:', error.message);
+      }
+    } catch(e) {
+      out.error = e.message;
+      out.queued = [];
+      console.warn('[ChannelQty] sync_queue insert threw:', e.message);
+    }
+  }
+  // The durable half of "queue or say so". The order path already writes this
+  // shape — beforeState / afterState / finalChannelState — and ITEM_SAVED
+  // carried nothing but {source}, which is why four channel moves today left no
+  // trace. This is that shape, applied to the save path.
+  logActivity('INVENTORY','CHANNEL_QTY_DELTA',null,
+    `Channel qty moved on ${after.sku}: ${chqText(out)}`,
+    { trigger: trigger, changes: detail, queued: out.queued, not_pushed_no_channel_id: out.unpushable, booths: out.booth, queue_error: out.error, warehouse_after: pi(after.qty) },
+    after.sku);
+  return out;
+}
+
+function sqStamp(rows) {
+  const list = Array.isArray(rows) ? rows : [rows];
+  for (const row of list) {
+    if (!row || !row.fields) continue;
+    if (row.operation !== 'update') continue;          // see the guard note above
+    if (row.fields._source === undefined) row.fields._source = 'v2';
+  }
+  return rows;
+}
+        // ── END OF V2 COPY ──
+
+        // ── COPIED FROM INVENTORY V2 2.9.74, L3314-3333, VERBATIM ──
+async function registerToolVersion(client, toolKey, toolVersion) {
+  if (!client) return;
+  try {
+    const { data } = await client.from('settings').select('value').eq('key', 'tool_versions').limit(1);
+    let versions = {};
+    const exists = data && data.length > 0;
+    if (exists && data[0].value) {
+      versions = typeof data[0].value === 'string' ? JSON.parse(data[0].value) : data[0].value;
+    }
+    if (versions[toolKey] === toolVersion) return;
+    versions[toolKey] = toolVersion;
+    const now = new Date().toISOString();
+    if (exists) {
+      await client.from('settings').update({ value: versions, updated_at: now, updated_by: toolKey }).eq('key', 'tool_versions');
+    } else {
+      await client.from('settings').insert({ key: 'tool_versions', value: versions, updated_at: now, updated_by: toolKey });
+    }
+    console.log(`Registered ${toolKey} ${toolVersion}`);
+  } catch(e) { console.log('Version register skipped:', e.message); }
+}
+        // ── END OF V2 COPY ──
+
 
         // ============================================================================
         // STATE
@@ -873,7 +1127,6 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
         let filteredInventory = [];
         let currentItem = null;
         let lastSyncTime = null;
-        let offlineQueue = [];
         let isConnected = false;
         let salesHistoryCache = [];
 
@@ -966,8 +1219,8 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
 
         function setChannelFilter(ch) {
             channelFilter = ch;
-            const ids  = ['fpAll','fpEtsy','fpWix','fpWayfair','fpTreasureMarts'];
-            const vals = ['all','etsy','wix','wayfair','treasuremarts'];
+            const ids  = ['fpAll','fpEtsy','fpWix','fpWayfair','fpCrazyChicks'];
+            const vals = ['all','etsy','wix','wayfair','crazychicks'];
             ids.forEach((id, i) => {
                 const el = document.getElementById(id);
                 if (el) el.classList.toggle('active', vals[i] === ch);
@@ -1051,26 +1304,28 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                 updateConnectionUI();
                 updateSyncStatus('Connected', false);
 
-                // 30s auto-sync (inline — startAutoSync() removed as OneDrive legacy)
-                setInterval(async () => {
-                    if (sbConnected) {
-                        try { await loadFromSupabase(); } catch (e) {}
-                        if (offlineQueue.length > 0) syncOfflineQueue();
-                    }
-                }, 30000);
+                // 30s refresh — v4.4.0: ONE timer however often Connect is pressed (G22), and no
+                // offline replay (D1).
+                if (!window._ccdAutoSync) {
+                    window._ccdAutoSync = setInterval(async () => {
+                        if (sbConnected) { try { await loadFromSupabase(); } catch (e) {} }
+                    }, 30000);
+                }
+                registerToolVersion(sbClient, 'mobile', TOOL_VERSION);
+                handleLegacyOfflineQueue();
 
                 // Realtime subscription
                 sbClient.channel('mobile-items')
                     .on('postgres_changes', { event: '*', schema: 'public', table: 'items' }, handleRealtimeChange)
                     .subscribe();
 
-                logActivity('SUPABASE_CONNECTED', { itemCount: inventory.length });
+                logEvent('SUPABASE_CONNECTED', { itemCount: inventory.length });
                 showToast('Connected! ' + inventory.length + ' items loaded', 'success');
                 return true;
             } catch (err) {
                 sbConnected = false; isConnected = false;
                 updateSyncStatus('Connection failed', false);
-                logActivity('SUPABASE_ERROR', { error: err.message });
+                logEvent('SUPABASE_ERROR', { error: err.message });
                 showToast('Connection failed: ' + err.message, 'error');
                 return false;
             }
@@ -1110,13 +1365,13 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
             const { eventType, new: newRow, old: oldRow } = payload;
             if (eventType === 'UPDATE' && newRow) {
                 const updated = sbRowToItem(newRow);
-                const idx = inventory.findIndex(i => i.sku === updated.sku);
+                const idx = inventory.findIndex(i => String(i.id) === String(updated.id));   // v4.4.0: by id (REG S94-05)
                 if (idx >= 0) inventory[idx] = updated;
             } else if (eventType === 'INSERT' && newRow) {
                 const item = sbRowToItem(newRow);
-                if (!inventory.find(i => i.sku === item.sku)) inventory.push(item);
+                if (!inventory.find(i => String(i.id) === String(item.id))) inventory.push(item);
             } else if (eventType === 'DELETE' && oldRow) {
-                inventory = inventory.filter(i => i.sku !== oldRow.sku);
+                inventory = inventory.filter(i => String(i.id) !== String(oldRow.id));
             }
             applyFilters(); updateStats();
         }
@@ -1152,176 +1407,33 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
             applyFilters(); updateStats();
             lastSyncTime = new Date();
             localStorage.setItem('ccd_mobile_last_sync', lastSyncTime.toISOString());
-            // If TM audit is open, rebuild the list so qty changes are reflected immediately
-            if (document.getElementById('treasureMartModal')?.classList.contains('active')) {
-                tmItemsAll = inventory
-                    .filter(i => (i.channels?.treasuremarts || 0) > 0)
-                    .sort((a, b) => {
-                        const bA = a.brandName || 'ZZZ', bB = b.brandName || 'ZZZ';
-                        return bA !== bB ? bA.localeCompare(bB) : (a.productName || '').localeCompare(b.productName || '');
-                    });
-                renderTMList();
-            }
+            // If the room audit is open, rebuild its list so qty changes show immediately
+            if (document.getElementById('treasureMartModal')?.classList.contains('active')) showRoomAudit(true);
         }
 
-        async function saveItemToSupabase(item) {
-            if (!sbClient || !sbConnected) return false;
+        // v4.4.0: V2's logActivity signature (category, action, channel, summary, details, sku),
+        // so the copied queueChannelQtyDeltas works unchanged and phone rows read like V2's.
+        // Never throws (V2 v2.9.47 BM-4); channel coalesced because the column is NOT NULL.
+        async function logActivity(category, action, channel, summary, details = {}, sku = null) {
+            if (!sbClient) return;
             try {
-                const row = itemToSbRow(item);
-                // Use UPDATE by id — mobile always updates existing items, never inserts.
-                // Avoids requiring a unique constraint on sku for upsert to work.
-                const { error } = await sbClient.from('items').update(row).eq('id', item.id);
-                if (error) throw error;
-                return true;
-            } catch (e) { console.error('Save:', e); return false; }
-        }
-
-        // ============================================================================
-        // SUPABASE — RECORD SALE (spec Section 8.4)
-        // Uses stored cost basis. No recalculation. Writes price_source.
-        // ============================================================================
-
-        async function recordSaleToSupabase(item, qty, channel, salePrice, userNotes) {
-            if (!sbClient || !sbConnected) return;
-            try {
-                const storedPrice = getChannelPrice(item, channel);
-                const priceSource = storedPrice != null ? 'desktop_stored' : 'manual';
-
-                // Use stored cost basis if available, otherwise null
-                const unitCost   = item.totalCostBasis != null ? item.totalCostBasis : null;
-                const totalRev   = salePrice * qty;
-                const totalCost  = unitCost != null ? unitCost * qty : null;
-                const netProfit  = totalCost != null ? totalRev - totalCost : null;
-                const margin     = (netProfit != null && totalRev > 0) ? (netProfit / totalRev) : null;
-
-                // Pre-fetch identity + listing IDs (these don't change across the sale).
-                // We need itemRow.id for the sales_history foreign key.
-                const { data: preItemRow } = await sbClient
-                    .from('items').select('id, etsy_listing_id, wix_product_id, wayfair_sku').eq('sku', item.sku).single();
-
-                await sbClient.from('sales_history').insert({
-                    item_id:          preItemRow?.id || null,
-                    sku:              item.sku,
-                    product_name:     item.productName || '',
-                    brand_name:       item.brandName   || '',
-                    qty_sold:         qty,
-                    sale_channel:     channel,
-                    sale_date:        new Date().toISOString().split('T')[0],
-                    sale_price:       salePrice,
-                    total_revenue:    totalRev,
-                    total_cost:       totalCost,
-                    net_profit:       netProfit,
-                    profit_margin:    margin,
-                    price_source:     priceSource,
-                    wholesale_price:  item.wholesalePrice  != null ? item.wholesalePrice  : null,
-                    ib_shipping:      item.ibShipping      != null ? item.ibShipping      : null,
-                    tariff:           item.tariff          != null ? item.tariff          : null,
-                    ob_shipping:      item.obShipping      != null ? item.obShipping      : null,
-                    notes:            'Mobile sale via ' + channel,
-                    user_notes:       userNotes || null,
-                    qty_handled:      false,   // ← triggers DB cascade for qty adjustments
-                });
-                // Note: DB trigger handle_sale_qty_cascade sets last_sold_date, last_sold_channel,
-                // and all qty fields. No need for a separate items.update() call here.
-
-                // ═══════════════════════════════════════════════════════════════════
-                // SYNC QUEUE — v4.3: option (b) authoritative post-trigger read.
-                // @invariant ECOSYSTEM-011 (peer-decrement on every sale)
-                //
-                // Rationale: the trigger (handle_sale_qty_cascade v2.0.0) updates
-                // items.etsy_qty / wix_qty / wayfair_qty atomically per ECOSYSTEM-011.
-                // We re-read the row post-insert and push THOSE values to sync_queue,
-                // so the client never re-implements cascade logic. Single source of
-                // truth = trigger. No drift risk if cascade rules change later.
-                //
-                // TM sales: skip sync_queue entirely (TM has no online API).
-                // Online sales: push a row for EVERY online channel the item has a
-                // listing on, not just the source channel. This is what fixes Mary's
-                // "Wix updates but Wayfair doesn't" bug from S25 mobile testing.
-                // ═══════════════════════════════════════════════════════════════════
-                if (preItemRow && channel !== 'treasuremarts') {
-                    // Post-trigger fetch — authoritative qty values after cascade.
-                    const { data: postItemRow, error: postErr } = await sbClient
-                        .from('items').select('id, etsy_qty, wix_qty, wayfair_qty').eq('sku', item.sku).single();
-
-                    if (postErr || !postItemRow) {
-                        console.warn('[Sync Queue] Post-trigger fetch failed:', postErr?.message);
-                    } else {
-                        const saleQueueRows = [];
-
-                        if (preItemRow.etsy_listing_id) {
-                            saleQueueRows.push({
-                                item_id:  postItemRow.id,
-                                channel:  'etsy',
-                                operation:'update',
-                                fields: {
-                                    sku:         item.sku,
-                                    productName: item.productName || '',
-                                    quantity:    postItemRow.etsy_qty || 0,
-                                    listingId:   preItemRow.etsy_listing_id,
-                                    fieldTypes:  ['quantity'],
-                                    trigger:     'mobile_sale'
-                                }
-                            });
-                        }
-                        if (preItemRow.wix_product_id) {
-                            saleQueueRows.push({
-                                item_id:  postItemRow.id,
-                                channel:  'wix',
-                                operation:'update',
-                                fields: {
-                                    sku:         item.sku,
-                                    productName: item.productName || '',
-                                    quantity:    postItemRow.wix_qty || 0,
-                                    productId:   preItemRow.wix_product_id,
-                                    fieldTypes:  ['quantity'],
-                                    trigger:     'mobile_sale'
-                                }
-                            });
-                        }
-                        if (preItemRow.wayfair_sku) {
-                            // v4.3: NO "channel === 'wayfair'" gate — push on every online sale
-                            // because ECOSYSTEM-011 peer-decrement means wayfair_qty changed.
-                            saleQueueRows.push({
-                                item_id:  postItemRow.id,
-                                channel:  'wayfair',
-                                operation:'update',
-                                fields: {
-                                    sku:         item.sku,
-                                    productName: item.productName || '',
-                                    quantity:    postItemRow.wayfair_qty || 0,
-                                    wayfairSku:  preItemRow.wayfair_sku,
-                                    fieldTypes:  ['quantity'],
-                                    trigger:     'mobile_sale'
-                                }
-                            });
-                        }
-
-                        if (saleQueueRows.length > 0) {
-                            sbClient.from('sync_queue').insert(saleQueueRows).then(res => {
-                                if (res.error) console.error('[Sync Queue] Mobile sale queue error:', res.error.message);
-                                else console.log(`[Sync Queue] Mobile sale: ${saleQueueRows.length} channel update(s) queued for ${item.sku}`);
-                            });
-                        }
-                    }
-                }
-
-            } catch (e) { console.warn('Sale record:', e.message); }
-        }
-
-        async function logActivityToSupabase(action, details) {
-            if (!sbClient || !sbConnected) return;
-            try {
-                await sbClient.from('activity_log').insert({
-                    category:  'mobile',
-                    action:    action,
-                    channel:   'system',
-                    summary:   action,
-                    details:   typeof details === 'object' ? details : { info: details },
-                    device:    'Mobile-v4.0',
+                const { error } = await sbClient.from('activity_log').insert({
+                    category: category || 'mobile',
+                    action:   action   || '',
+                    channel:  channel  || 'system',
+                    summary:  summary  || '',
+                    details:  { ...(details && typeof details === 'object' ? details : {}), source: 'mobile_pwa', tool_version: TOOL_VERSION },
+                    sku,
+                    device:    DEVICE_LABEL,
                     user_name: 'Mobile'
                 });
-            } catch (e) { /* silent */ }
+                if (error) console.warn('[activity_log] insert failed:', error.code, error.message);
+            } catch (e) { console.warn('[activity_log] insert threw:', e.message); }
+        }
+
+        // Session events (connect, login, start-up) — category 'mobile', as before.
+        function logEvent(action, details) {
+            logActivity('mobile', action, 'system', action, typeof details === 'object' ? details : { info: details }, null);
         }
 
         function updateSyncStatus(message, isSyncing) {
@@ -1356,6 +1468,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                 comments:    row.comments     || '',
                 isActive:    row.is_active !== false,
                 isBundle:    row.is_bundle === true,  // v4.3 — needed for ECOSYSTEM-011 bundle skip
+                itemRole:    row.item_role || 'single',   // v4.4.0 — Sets/bundles are refused on the phone
 
                 // ── Quantities ────────────────────────────────────────────────────────
                 qty: row.qty || 0,
@@ -1363,7 +1476,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                     etsy:          row.etsy_qty          || 0,
                     wix:           row.wix_qty           || 0,
                     wayfair:       row.wayfair_qty       || 0,
-                    crazychicks:   row.crazychicks_qty   || 0,   // data layer kept — hidden in UI
+                    crazychicks:   row.crazychicks_qty   || 0,   // v4.4.0: the Crazy Chicks room — shown and editable
                     treasuremarts: row.treasuremarts_qty || 0,
                 },
 
@@ -1447,84 +1560,36 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
         }
 
         // ============================================================================
-        // ACTIVITY LOGGING (v4.0 — direct pass-through, no local array)
+        // v4.4.0 (S103 decision D1): NOTHING IS WRITTEN OFFLINE.
+        // The old app queued offline changes in localStorage and replayed the CACHED ROW
+        // later — a stale overwrite. If an old queue is still on this phone, its entries
+        // are NOT applied: they are copied into the activity log (so Paul can re-enter
+        // them by hand) and only then cleared. Never silently dropped.
         // ============================================================================
-
-        function logActivity(action, details) {
-            logActivityToSupabase(action, details);
-        }
-
-        // ============================================================================
-        // OFFLINE QUEUE — complete redesign (spec Section 9)
-        // ============================================================================
-
-        function loadOfflineQueue() {
-            try { const s = localStorage.getItem('ccd_mobile_offline_queue'); if (s) offlineQueue = JSON.parse(s); } catch (e) { offlineQueue = []; }
-        }
-        function saveOfflineQueue() {
-            try { localStorage.setItem('ccd_mobile_offline_queue', JSON.stringify(offlineQueue)); } catch (e) {}
-        }
-
-        function addToOfflineQueue(type, payload) {
-            offlineQueue.push({
-                id:        Date.now() + '-' + Math.random().toString(36).slice(2, 6),
-                timestamp: new Date().toISOString(),
-                type,
-                payload
+        async function handleLegacyOfflineQueue() {
+            let q = [];
+            try { const s = localStorage.getItem('ccd_mobile_offline_queue'); if (s) q = JSON.parse(s) || []; } catch (e) { q = []; }
+            if (!Array.isArray(q) || q.length === 0 || !sbClient || !sbConnected) return;
+            const { error } = await sbClient.from('activity_log').insert({
+                category: 'mobile', action: 'OFFLINE_QUEUE_NOT_APPLIED', channel: 'system',
+                summary: `${q.length} change(s) saved offline by an older phone app were NOT applied — re-enter them by hand`,
+                details: { source: 'mobile_pwa', tool_version: TOOL_VERSION, entries: q },
+                device: DEVICE_LABEL, user_name: 'Mobile'
             });
-            if (offlineQueue.length > 100) offlineQueue = offlineQueue.slice(-100);
-            saveOfflineQueue();
+            if (error) { showResult(`⚠️ ${q.length} old offline change(s) are still on this phone and could not be logged (${error.message}). Tell Paul.`, 'warning'); return; }
+            try { localStorage.removeItem('ccd_mobile_offline_queue'); } catch (e) {}
+            showResult(`⚠️ ${q.length} change(s) made offline in the old app were NOT applied. They are in the Activity Log — tell Paul so they can be re-entered.`, 'warning');
         }
 
-        // syncOfflineQueue — proper replay engine (spec Section 9.3)
-        async function syncOfflineQueue() {
-            if (offlineQueue.length === 0 || !sbConnected) return;
-            const total = offlineQueue.length;
-            showToast('Syncing ' + total + ' offline changes...', 'warning');
-            let succeeded = 0, failed = 0;
-            const remaining = [];
-
-            for (const entry of offlineQueue) {
-                try {
-                    if (entry.type === 'sale') {
-                        const { payload: p } = entry;
-                        const item = inventory.find(i => i.sku === p.sku);
-                        if (item) {
-                            // recordSaleToSupabase inserts with qty_handled=false
-                            // DB trigger handles all qty cascade — do NOT call saveItemToSupabase()
-                            // here because the local item has optimistic offline qtys that would
-                            // overwrite what the trigger correctly computed
-                            await recordSaleToSupabase(item, p.qtySold, p.channel, p.salePrice, p.userNotes || null);
-                        }
-                    } else if (entry.type === 'item_update') {
-                        const { payload: p } = entry;
-                        const item = inventory.find(i => i.sku === p.sku);
-                        if (item) await saveItemToSupabase(item);
-                    } else if (entry.type === 'add_item') {
-                        await sbClient.from('items').insert(itemToSbRow(entry.payload));
-                    } else if (entry.type === 'audit_save') {
-                        const { payload: p } = entry;
-                        const item = inventory.find(i => i.sku === p.sku);
-                        if (item) await saveItemToSupabase(item);
-                    }
-                    succeeded++;
-                } catch (e) {
-                    console.warn('Queue replay failed:', entry.type, e.message);
-                    failed++;
-                    remaining.push(entry);
-                }
-            }
-
-            offlineQueue = remaining;
-            saveOfflineQueue();
-            logActivity('OFFLINE_QUEUE_SYNCED', { total, succeeded, failed });
-
-            if (failed > 0) {
-                showToast('Synced ' + succeeded + '/' + total + ' — ' + failed + ' failed', 'warning');
-            } else {
-                showToast('✅ ' + succeeded + ' offline changes synced', 'success');
-            }
+        // v4.4.0: a result line that stays until dismissed — the outcome of a save, sale
+        // or write-off, including any channel that was NOT pushed (V2's amber card, S100).
+        function showResult(message, type) {
+            const el = document.getElementById('resultBar');
+            if (!el) { showToast(message, type === 'success' ? 'success' : 'error'); return; }
+            el.className = 'result-bar show ' + (type || '');
+            document.getElementById('resultText').textContent = message;
         }
+        function hideResult() { const el = document.getElementById('resultBar'); if (el) el.className = 'result-bar'; }
 
         // ============================================================================
         // PIN AUTHENTICATION
@@ -1547,7 +1612,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                 localStorage.setItem('ccd_mobile_auth_expiry', (Date.now() + 7 * 24 * 60 * 60 * 1000).toString());
                 document.getElementById('pinScreen').classList.add('hidden');
                 document.getElementById('appContainer').classList.add('active');
-                logActivity('PIN_LOGIN_SUCCESS', {});
+                logEvent('PIN_LOGIN_SUCCESS', {});
                 initApp();
             } else {
                 for (let i = 1; i <= 4; i++) document.getElementById('dot' + i).classList.add('error');
@@ -1598,7 +1663,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                 const ep  = getChannelPrice(item, 'etsy');
                 const wp  = getChannelPrice(item, 'wix');
                 const wfp = getChannelPrice(item, 'wayfair');
-                const tp  = getChannelPrice(item, 'treasuremarts');
+                const cp  = getChannelPrice(item, 'crazychicks');
 
                 const fmtPrice = (p) => p != null ? '$' + p.toFixed(2) : '---';
                 const priceClass = (p) => p != null ? 'channel-price' : 'channel-price null-price';
@@ -1626,7 +1691,11 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                         <div class="channel-row"><span class="channel-label">Etsy:</span><span class="channel-qty">${ch.etsy || 0}</span><span class="${priceClass(ep)}">${fmtPrice(ep)}</span></div>
                         <div class="channel-row"><span class="channel-label">Wix:</span><span class="channel-qty">${ch.wix || 0}</span><span class="${priceClass(wp)}">${fmtPrice(wp)}</span></div>
                         <div class="channel-row"><span class="channel-label">Wayfair:</span><span class="channel-qty">${ch.wayfair || 0}</span><span class="${priceClass(wfp)}">${fmtPrice(wfp)}</span></div>
-                        <div class="channel-row"><span class="channel-label">TreasureMarts:</span><span class="channel-qty">${ch.treasuremarts || 0}</span><span class="${priceClass(tp)}">${fmtPrice(tp)}</span></div>
+                        <div class="channel-row"><span class="channel-label">Crazy Chicks:</span><span class="channel-qty">${ch.crazychicks || 0}</span><span class="${priceClass(cp)}">${fmtPrice(cp)}</span></div>
+                        ${(ch.treasuremarts || 0) > 0 ? `<div class="channel-row"><span class="channel-label">TreasureMarts (closed):</span><span class="channel-qty">${ch.treasuremarts}</span><span class="channel-price null-price">wind down in V2</span></div>` : ''}
+                        <div class="channel-row"><span class="channel-label">Available online:</span><span class="channel-qty">${Math.max(0, (parseInt(item.qty) || 0) - (ch.crazychicks || 0) - (ch.treasuremarts || 0))}</span><span class="channel-price"></span></div>
+                        ${isComposite(item) ? `<div class="channel-row"><span class="channel-label">🧩 ${item.itemRole === 'set' ? 'Set' : 'Bundle'} — managed in V2</span></div>` : ''}
+                        ${(!isComposite(item) && (ch.crazychicks || 0) > 0) ? `<button onclick="event.stopPropagation(); tmMarkAsSold('${item.id}')" style="margin-top:8px;width:100%;padding:10px;border:none;border-radius:8px;background:#DB2777;color:white;font-size:14px;font-weight:600;cursor:pointer;">🐥 Sell in Chicks${cp != null ? ' · $' + cp.toFixed(2) : ''}</button>` : ''}
                     </div>
                 </div>`;
             }).join('');
@@ -1663,7 +1732,16 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
             document.getElementById('editEtsy').value          = ch.etsy          || 0;
             document.getElementById('editWix').value           = ch.wix           || 0;
             document.getElementById('editWayfair').value       = ch.wayfair       || 0;
-            document.getElementById('editTreasureMarts').value = ch.treasuremarts || 0;
+            document.getElementById('editCrazyChicks').value   = ch.crazychicks   || 0;
+            const tmNote = document.getElementById('tmClosedNote');
+            tmNote.style.display = (ch.treasuremarts || 0) > 0 ? 'block' : 'none';
+            tmNote.textContent = `TreasureMarts (closed): ${ch.treasuremarts || 0} — wind this down in Inventory V2.`;
+            // v4.4.0: a Set/bundle is shown but locked — its stock is the engine's (Paul, S103).
+            const locked = isComposite(currentItem);
+            const lock = document.getElementById('roleLock');
+            lock.style.display = locked ? 'block' : 'none';
+            lock.textContent = locked ? `🧩 This is a ${currentItem.itemRole === 'set' ? 'Set' : 'bundle'}. Its stock comes from its pieces — sell, adjust or write it off in Inventory V2. You can still edit the name, brand and comments here.` : '';
+            ['editQty','editEtsy','editWix','editWayfair','editCrazyChicks'].forEach(id => { document.getElementById(id).disabled = locked; });
             updateTotalQty();
 
             // Populate financial display panel
@@ -1677,7 +1755,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                 { key: 'etsy',          label: '🏷 Etsy'   },
                 { key: 'wix',           label: '🌐 Wix'    },
                 { key: 'wayfair',       label: '🏠 Wayfair' },
-                { key: 'treasuremarts', label: '💎 TM'     },
+                { key: 'crazychicks',   label: '🐥 Chicks' },
             ];
 
             const fmtD = (v) => v != null ? '$' + parseFloat(v).toFixed(2) : '---';
@@ -1721,68 +1799,99 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
         function closeItemModalOutside(e) { if (e.target === e.currentTarget) closeItemModal(); }
 
         function updateTotalQty() {
-            const t = (parseInt(document.getElementById('editEtsy').value)||0)
-                    + (parseInt(document.getElementById('editWix').value)||0)
-                    + (parseInt(document.getElementById('editWayfair').value)||0)
-                    + (parseInt(document.getElementById('editTreasureMarts').value)||0);
+            // v4.4.0: shows AVAILABLE ONLINE = warehouse − Crazy Chicks − TreasureMarts, the number the guard enforces.
+            const tm = currentItem ? (currentItem.channels?.treasuremarts || 0) : 0;
+            const t = Math.max(0, (parseInt(document.getElementById('editQty').value) || 0)
+                    - (parseInt(document.getElementById('editCrazyChicks').value) || 0) - tm);
             document.getElementById('totalQtyDisplay').textContent = t;
         }
 
         async function saveItem() {
+            // v4.4.0 (S103): V2 saveItem's contract. Re-read by id, both booths/rooms in the
+            // guard, only changed columns written, every channel move queued or announced.
+            // "Etsy and Wix must match" is GONE (ECOSYSTEM-002; V2 dropped it at v2.8.10).
+            // TreasureMarts is not editable here any more — it is wound down in V2.
             if (!currentItem) return;
-            const newQty = parseInt(document.getElementById('editQty').value) || 0;
-            const alloc = {
-                etsy:          parseInt(document.getElementById('editEtsy').value)          || 0,
-                wix:           parseInt(document.getElementById('editWix').value)           || 0,
-                wayfair:       parseInt(document.getElementById('editWayfair').value)       || 0,
-                treasuremarts: parseInt(document.getElementById('editTreasureMarts').value) || 0,
+            if (!requireOnline()) return;
+            const item = currentItem;
+            const sku = item.sku;
+
+            let before, capNote = [];
+            try { before = await fetchItemRow(item.id); }
+            catch (e) { showResult('⚠️ ' + e.message + ' — nothing was saved.', 'error'); return; }
+
+            const text = {
+                product_name: document.getElementById('editProductName').value.trim(),
+                brand_name:   document.getElementById('editBrand').value.trim(),
+                comments:     document.getElementById('editComments').value.trim(),
             };
+            const updates = {};
+            if (text.product_name !== (before.product_name || '')) updates.product_name = text.product_name;
+            if (text.brand_name   !== (before.brand_name   || '')) updates.brand_name   = text.brand_name;
+            if (text.comments     !== (before.comments     || '')) updates.comments     = text.comments;
 
-            if (alloc.etsy !== alloc.wix) { showToast('Etsy and Wix must match', 'error'); return; }
-            if (alloc.treasuremarts > newQty) { showToast('TreasureMarts cannot exceed warehouse qty', 'error'); return; }
-
-            const availableForOnline = newQty - alloc.treasuremarts;
-            if (alloc.etsy > availableForOnline) {
-                showToast(`Etsy/Wix cannot exceed ${availableForOnline} (warehouse ${newQty} − TM ${alloc.treasuremarts})`, 'error'); return;
+            if (!isComposite(before)) {
+                const want = {
+                    qty:             pi(document.getElementById('editQty').value),
+                    etsy_qty:        pi(document.getElementById('editEtsy').value),
+                    wix_qty:         pi(document.getElementById('editWix').value),
+                    wayfair_qty:     pi(document.getElementById('editWayfair').value),
+                    crazychicks_qty: pi(document.getElementById('editCrazyChicks').value),
+                };
+                const tm = pi(before.treasuremarts_qty);
+                if (tm + want.crazychicks_qty > want.qty) {
+                    showResult(`Not saved: ${ROOM_LABEL} ${want.crazychicks_qty}` + (tm ? ` + TreasureMarts ${tm}` : '') + ` is more than the warehouse ${want.qty}.`, 'error');
+                    return;
+                }
+                // V2 saveItem L7954: an online channel above available is CAPPED, not refused, so a
+                // channel that was already over (and that Mary did not touch) never blocks her save.
+                // A channel she TYPED above available is capped only after she agrees.
+                const avail = Math.max(0, want.qty - tm - want.crazychicks_qty);
+                const typedOver = [], quietCaps = [];
+                for (const ch of ONLINE_CHANNELS) {
+                    const col = CH_QTY_COL[ch];
+                    if (want[col] > avail) {
+                        (want[col] !== pi(before[col]) ? typedOver : quietCaps).push(`${CH_LABEL[ch]} ${want[col]}→${avail}`);
+                        want[col] = avail;
+                    }
+                }
+                if (typedOver.length && !confirm(`Only ${avail} can be offered online (warehouse ${want.qty} − ${ROOM_LABEL} ${want.crazychicks_qty}` + (tm ? ` − TreasureMarts ${tm}` : '') + `).\n\nSave with ${typedOver.join(', ')}?`)) return;
+                capNote = typedOver.concat(quietCaps);
+                // V2 REACTIVATION GUARD (saveItem L7981): Etsy 0 → >0 re-lists the item.
+                if (pi(before.etsy_qty) === 0 && want.etsy_qty > 0 && before.etsy_listing_id) {
+                    if (!confirm(`⚠️ REACTIVATION\n\n${sku} had 0 on Etsy and you are setting it to ${want.etsy_qty}.\nThis will make the Etsy listing live again.\n\nContinue? (Cancel keeps Etsy at 0)`)) {
+                        want.etsy_qty = 0;
+                        document.getElementById('editEtsy').value = 0;
+                    }
+                }
+                for (const [col, v] of Object.entries(want)) if (v !== pi(before[col])) updates[col] = v;
             }
-            if (alloc.wayfair > availableForOnline) {
-                showToast(`Wayfair cannot exceed ${availableForOnline} (warehouse ${newQty} − TM ${alloc.treasuremarts})`, 'error'); return;
+
+            if (Object.keys(updates).length === 0) { closeItemModal(); showToast('No changes to save', 'success'); return; }
+
+            const { error } = await sbClient.from('items').update(updates).eq('id', item.id);
+            if (error) {
+                showResult('⚠️ Not saved: ' + (error.message.includes('CCD-COMPOSITE') ? compositeRefusal(sku) : error.message), 'error');
+                return;
             }
-
-            // Only update fields mobile owns — SKU, wholesalePrice, retailPrice are NOT touched
-            currentItem.productName = document.getElementById('editProductName').value.trim();
-            currentItem.brandName   = document.getElementById('editBrand').value.trim();
-            currentItem.comments    = document.getElementById('editComments').value.trim();
-            currentItem.qty         = newQty;
-            currentItem.channels    = { ...currentItem.channels, ...alloc };
-            // NOTE: autoAdjustChannelAllocations() intentionally removed — desktop manages allocation logic
-
-            logActivity('ITEM_EDITED', { sku: currentItem.sku, qty: newQty, alloc });
-            applyFilters(); updateStats();
-            // NOTE: saveToStorage() intentionally removed — Supabase is the only source of truth
-
-            if (sbConnected) {
-                const ok = await saveItemToSupabase(currentItem);
-                closeItemModal();
-                if (ok) showToast('Item updated!', 'success');
-                else    showToast('⚠️ Save failed — check connection', 'error');
-            } else {
-                addToOfflineQueue('item_update', {
-                    sku:      currentItem.sku,
-                    qty:      newQty,
-                    channels: alloc,
-                    comments: currentItem.comments
-                });
-                closeItemModal();
-                showToast('Saved offline — will sync when connected', 'warning');
-            }
+            const after = await chqRead(item.id);
+            const res = await queueChannelQtyDeltas(before, after, 'mobile_save');
+            logActivity('INVENTORY', 'ITEM_SAVED', null, `Saved ${sku} on the phone: ${Object.keys(updates).join(', ')}`, { changes: updates }, sku);
+            closeItemModal();
+            await refreshItem(item.id);
+            const bad = res.unknown || res.error || res.unpushable.length;
+            showResult(`Saved ${sku}` + (capNote.length ? ` · capped to available online: ${capNote.join(', ')}` : '') + ` · ${queueOutcomeText(res)}`, bad ? 'warning' : 'success');
         }
 
         // ============================================================================
         // SALE MODAL
         // ============================================================================
 
-        function markAsSold() { if (currentItem) openSaleModal(); }
+        function markAsSold() {
+            if (!currentItem) return;
+            if (isComposite(currentItem)) { showToast(compositeRefusal(currentItem.sku), 'error'); return; }
+            openSaleModal();
+        }
 
         function openSaleModal() {
             document.getElementById('saleItemName').textContent = currentItem.productName || 'Unnamed';
@@ -1795,7 +1904,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
             if      (ch.etsy          > 0) document.getElementById('saleChannel').value = 'etsy';
             else if (ch.wix           > 0) document.getElementById('saleChannel').value = 'wix';
             else if (ch.wayfair       > 0) document.getElementById('saleChannel').value = 'wayfair';
-            else if (ch.treasuremarts > 0) document.getElementById('saleChannel').value = 'treasuremarts';
+            else if (ch.crazychicks   > 0) document.getElementById('saleChannel').value = 'crazychicks';
 
             updateSalePrice();
             document.getElementById('itemModal').classList.remove('active');
@@ -1813,90 +1922,101 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
         function closeSaleModalOutside(e) { if (e.target === e.currentTarget) closeSaleModal(); }
 
         async function confirmSale() {
+            // v4.4.0 (S103): V2 confirmSell's contract, singles only. Fees from
+            // calculate_sale_profit; qty_handled left NULL so the trigger does nothing;
+            // stock written by id; online peers decremented (ECOSYSTEM-011) and capped
+            // against both rooms/booths; pushes through queueChannelQtyDeltas.
             if (!currentItem) return;
+            if (!requireOnline()) return;
             const channel   = document.getElementById('saleChannel').value;
-            const qtySold   = parseInt(document.getElementById('saleQty').value)    || 1;
-            const salePrice = parseFloat(document.getElementById('salePrice').value) || 0;
+            const qtySold   = pi(document.getElementById('saleQty').value);
+            const salePrice = pf(document.getElementById('salePrice').value);
+            const saleDate  = document.getElementById('saleDate').value || new Date().toISOString().split('T')[0];
             const saleNotes = (document.getElementById('saleNotes').value || '').trim();
-            const ch        = currentItem.channels || {};
-            const curQty    = ch[channel] || 0;
 
-            if (qtySold > curQty && !confirm('Only ' + curQty + ' in ' + channel + '. Proceed?')) return;
+            if (!SALE_CHANNELS.includes(channel)) { showToast('Choose a channel', 'error'); return; }
+            if (qtySold <= 0)  { showToast('Quantity must be at least 1', 'error'); return; }
+            if (salePrice <= 0) { showToast('Sale price required', 'error'); return; }
 
-            // ═══════════════════════════════════════════════════════════════════
-            // OPTIMISTIC LOCAL UPDATE — UI refresh only. DB trigger is authoritative.
-            // @invariant ECOSYSTEM-011 (peer-decrement on every sale)
-            // @invariant ECOSYSTEM-001 (Model B — warehouse_qty = total owned)
-            // @invariant ECOSYSTEM-002 (NO Etsy↔Wix mirror — each peer tracks own qty)
-            //
-            // Online sale:
-            //   - warehouse_qty decrements
-            //   - source channel decrements
-            //   - every online peer decrements 1:1 (unless bundle parent)
-            //   - TM untouched
-            // TM sale (Model B):
-            //   - warehouse_qty decrements (total owned now one less)
-            //   - TM decrements
-            //   - online peers untouched
-            //
-            // Bundles skip peer-decrement (symmetric to trigger). PWA loadFromSupabase
-            // re-pulls in 1.5s so any optimistic drift self-corrects.
-            // DO NOT REMOVE peer-decrement without bumping all cascade paths in lockstep.
-            // ═══════════════════════════════════════════════════════════════════
-            const oldWh    = parseInt(currentItem.qty) || 0;
-            const newWh    = Math.max(0, oldWh - qtySold);
-            const isBundle = currentItem.isBundle === true;
+            let row;
+            try { row = await fetchItemRow(currentItem.id); }
+            catch (e) { showToast(e.message + ' — nothing was recorded.', 'error'); return; }
+            const sku = row.sku;
+            if (isComposite(row)) { showToast(compositeRefusal(sku), 'error'); return; }
 
-            if (channel === 'treasuremarts') {
-                // Model B: both warehouse and TM decrement; online peers untouched.
-                currentItem.qty = newWh;
-                currentItem.channels = {
-                    ...currentItem.channels,
-                    treasuremarts: Math.max(0, curQty - qtySold),
-                };
-            } else {
-                // Online sale — ECOSYSTEM-011 peer-decrement across all online channels.
-                currentItem.qty = newWh;
-                if (isBundle) {
-                    // Bundle parent: source decrements, peers untouched.
-                    currentItem.channels = {
-                        ...currentItem.channels,
-                        [channel]: Math.max(0, curQty - qtySold),
-                    };
-                } else {
-                    currentItem.channels = {
-                        ...currentItem.channels,
-                        etsy:    Math.max(0, (ch.etsy    || 0) - qtySold),
-                        wix:     Math.max(0, (ch.wix     || 0) - qtySold),
-                        wayfair: Math.max(0, (ch.wayfair || 0) - qtySold),
-                        // treasuremarts untouched on online sales
-                    };
+            const chCol = CH_QTY_COL[channel];
+            if (qtySold > pi(row.qty))     { showToast(`Only ${pi(row.qty)} in the warehouse — cannot sell ${qtySold}. Nothing was recorded.`, 'error'); return; }
+            if (qtySold > pi(row[chCol]))  { showToast(`Only ${pi(row[chCol])} allocated to ${CH_LABEL[channel]} — cannot sell ${qtySold}. Nothing was recorded.`, 'error'); return; }
+
+            // The new quantities, computed BEFORE anything is written so the confirm can show them.
+            const qtyUpdates = { qty: Math.max(0, pi(row.qty) - qtySold) };
+            qtyUpdates[chCol] = Math.max(0, pi(row[chCol]) - qtySold);
+            if (ONLINE_CHANNELS.includes(channel)) {
+                for (const peer of ONLINE_CHANNELS) {
+                    if (peer === channel) continue;
+                    const pc = CH_QTY_COL[peer];
+                    if (pi(row[pc]) > 0) qtyUpdates[pc] = Math.max(0, pi(row[pc]) - qtySold);   // ECOSYSTEM-011, peer at 0 = no-op
                 }
             }
+            capOnline(qtyUpdates, row);
+            qtyUpdates.last_sold_date = saleDate;
+            qtyUpdates.last_sold_channel = channel;
 
-            logActivity('ITEM_SOLD', { sku: currentItem.sku, channel, qtySold, salePrice });
-            applyFilters(); updateStats();
-
-            if (sbConnected) {
-                // Trigger handles all DB qty cascade — mobile just records the sale with qty_handled = false
-                await recordSaleToSupabase(currentItem, qtySold, channel, salePrice, saleNotes);
-                closeSaleModal();
-                showToast('Sold ' + qtySold + ' from ' + channel + ' for $' + salePrice.toFixed(2), 'success');
-                // Re-sync from DB after brief delay so local state reflects trigger result
-                setTimeout(() => loadFromSupabase(), 1500);
-            } else {
-                addToOfflineQueue('sale', {
-                    sku:         currentItem.sku,
-                    channel,
-                    qtySold,
-                    salePrice,
-                    userNotes:   saleNotes || null,
-                    productName: currentItem.productName || '',
-                    brandName:   currentItem.brandName   || ''
-                });
-                closeSaleModal();
-                showToast('Sale saved offline — qty will sync when connected', 'warning');
+            const moves = [`warehouse ${pi(row.qty)}→${qtyUpdates.qty}`];
+            for (const ch of [...ONLINE_CHANNELS, ROOM]) {
+                const c = CH_QTY_COL[ch];
+                if (qtyUpdates[c] !== undefined && qtyUpdates[c] !== pi(row[c])) moves.push(`${CH_LABEL[ch]} ${pi(row[c])}→${qtyUpdates[c]}`);
             }
+            if (!confirm(`Sell ${qtySold} × ${sku} in ${CH_LABEL[channel]} for $${(salePrice * qtySold).toFixed(2)}?\n\n${moves.join('\n')}`)) return;
+
+            // ── Fees: calculate_sale_profit, exactly as V2 L8596-8623 ──
+            const wholesale = pf(row.wholesale_price), ibPct = pf(row.ib_shipping), tariffPct = pf(row.tariff);
+            const obShip = (channel === 'wayfair' || channel === ROOM || channel === 'treasuremarts') ? 0 : pf(row.ob_shipping);
+            const baseCost = (wholesale * (1 + ibPct / 100 + tariffPct / 100) + obShip) * qtySold;
+            const totalRevenue = salePrice * qtySold;
+            let netProfit = totalRevenue - baseCost, fee = null;
+            try {
+                const { data, error } = await sbClient.rpc('calculate_sale_profit', {
+                    p_channel: channel, p_wholesale: wholesale, p_ib_pct: ibPct, p_tariff: tariffPct,
+                    p_ob_shipping: obShip, p_sale_price: salePrice, p_qty: qtySold, p_sale_date: saleDate
+                });
+                if (!error && data) { fee = data; netProfit = data.net_profit; }
+            } catch (e) { console.warn('[Sale] fee RPC failed, simplified profit used:', e.message); }
+            const f = k => fee ? fee[k] : null;
+
+            const stored = getChannelPrice(currentItem, channel);
+            const { error: saleErr } = await sbClient.from('sales_history').insert({
+                item_id: row.id, sku, product_name: row.product_name || '', brand_name: row.brand_name || '',
+                qty_sold: qtySold, sale_channel: channel, sale_date: saleDate, sale_price: salePrice,
+                total_revenue: totalRevenue, total_cost: fee ? fee.total_cost : baseCost,
+                net_profit: netProfit, profit_margin: totalRevenue > 0 ? netProfit / totalRevenue : 0,
+                wholesale_price: wholesale, ib_shipping: ibPct, tariff: tariffPct, ob_shipping: obShip,
+                price_source: stored != null && Math.abs(stored - salePrice) < 0.005 ? 'desktop_stored' : 'manual',
+                notes: 'Mobile sale via ' + channel, user_notes: saleNotes || null,
+                oh_fee: f('oh_fee'), surcharge: f('surcharge'), transaction_fee: f('transaction_fee'), cc_fee: f('cc_fee'),
+                listing_fee: f('listing_fee'), wayfair_fee: f('wayfair_fee'), recovery_fee: f('recovery_fee'),
+                commission: f('commission'), rent: f('rent'), marketplace_deduction: f('marketplace_deduction'),
+                gross_revenue: f('gross_revenue'), total_fees: f('total_fees'), accounting_category: f('accounting_category')
+                // qty_handled deliberately NOT sent: NULL means the sale trigger does nothing (S103 M1).
+            });
+            if (saleErr) { showToast('Sale NOT recorded: ' + saleErr.message, 'error'); return; }
+
+            const { error: qtyErr } = await sbClient.from('items').update(qtyUpdates).eq('id', row.id);
+            if (qtyErr) {
+                logActivity('ORDER', 'MANUAL_SALE_STOCK_FAILED', channel, `Sale of ${sku} x${qtySold} WAS recorded but stock was NOT updated: ${qtyErr.message}`, { qtyUpdates }, sku);
+                closeSaleModal();
+                showResult(`⚠️ The sale WAS recorded but the stock was NOT updated (${qtyErr.message}). Tell Paul before doing anything else with ${sku}.`, 'error');
+                return;
+            }
+            const after = await chqRead(row.id);
+            const res = await queueChannelQtyDeltas(row, after, 'mobile_sale');
+            logActivity('ORDER', 'MANUAL_SALE', channel, `Sold ${sku} x${qtySold} on ${channel} for $${totalRevenue.toFixed(2)} (phone)`, { profit: pf(netProfit).toFixed(2), feeCalc: !!fee }, sku);
+
+            closeSaleModal();
+            await refreshItem(row.id);
+            if (document.getElementById('treasureMartModal')?.classList.contains('active')) showRoomAudit(true);
+            const bad = res.unknown || res.error || res.unpushable.length || !fee;
+            showResult(`Sold ${qtySold} × ${sku} in ${CH_LABEL[channel]} for $${totalRevenue.toFixed(2)}` + (fee ? '' : ' · ⚠️ fees NOT calculated') + ` · ${queueOutcomeText(res)}`, bad ? 'warning' : 'success');
         }
 
         function formatTime(date) {
@@ -1949,13 +2069,13 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                 const { data, error } = await sbClient
                     .from('activity_log')
                     .select('*')
-                    .eq('device', 'Mobile-v4.0')
-                    .order('created_at', { ascending: false })
+                    .like('device', 'Mobile-%')
+                    .order('timestamp', { ascending: false })
                     .limit(50);
                 if (error) throw error;
                 if (!data || data.length === 0) { el.textContent = 'No mobile activity logged yet.'; return; }
                 el.textContent = data.map(e =>
-                    '[' + new Date(e.created_at).toLocaleString() + ']\n' +
+                    '[' + new Date(e.timestamp).toLocaleString() + ']\n' +
                     e.action + '\n' +
                     JSON.stringify(e.details, null, 2) + '\n' +
                     '─'.repeat(30)
@@ -1982,23 +2102,27 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
 
         let treasureMartAudit = {};
 
-        function loadTreasureMartAudit() { try { const s = localStorage.getItem('ccd_tm_audit'); if (s) treasureMartAudit = JSON.parse(s); } catch (e) { treasureMartAudit = {}; } }
-        function saveTreasureMartAuditState() { try { localStorage.setItem('ccd_tm_audit', JSON.stringify(treasureMartAudit)); } catch (e) {} }
+        function loadTreasureMartAudit() { try { const s = localStorage.getItem('ccd_room_audit'); if (s) treasureMartAudit = JSON.parse(s); } catch (e) { treasureMartAudit = {}; } }
+        function saveTreasureMartAuditState() { try { localStorage.setItem('ccd_room_audit', JSON.stringify(treasureMartAudit)); } catch (e) {} }
 
         // Master sorted TM list — built once on open, filtered on search
         let tmItemsAll = [];
 
-        function showTreasureMartReport() {
+        // v4.4.0: the Crazy Chicks ROOM audit (was the TreasureMarts audit). keepState=true
+        // re-renders an open audit after a save without closing Settings or clearing search.
+        function showRoomAudit(keepState) {
             loadTreasureMartAudit();
             tmItemsAll = inventory
-                .filter(i => (i.channels?.treasuremarts || 0) > 0)
+                .filter(i => (i.channels?.crazychicks || 0) > 0)
                 .sort((a, b) => {
                     const bA = a.brandName || 'ZZZ', bB = b.brandName || 'ZZZ';
                     return bA !== bB ? bA.localeCompare(bB) : (a.productName || '').localeCompare(b.productName || '');
                 });
-            const srch = document.getElementById('tmSearchInput');
-            if (srch) srch.value = '';
-            closeSettings();
+            if (!keepState) {
+                const srch = document.getElementById('tmSearchInput');
+                if (srch) srch.value = '';
+                closeSettings();
+            }
             document.getElementById('treasureMartModal').classList.add('active');
             renderTMList();
         }
@@ -2018,8 +2142,8 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
             // Totals always computed from full list
             let totalExp = 0, totalVal = 0, foundCt = 0, partCt = 0, missCt = 0, remCt = 0;
             tmItemsAll.forEach(item => {
-                const eQ   = item.channels?.treasuremarts || 0;
-                const price = getChannelPrice(item, 'treasuremarts');
+                const eQ   = item.channels?.crazychicks || 0;
+                const price = getChannelPrice(item, 'crazychicks');
                 totalExp += eQ;
                 totalVal += eQ * (price ?? 0);
                 const as = treasureMartAudit[item.id] || { status: 'unchecked', foundQty: eQ };
@@ -2039,14 +2163,14 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
             if (tmItems.length === 0) {
                 listDiv.innerHTML = q
                     ? `<div style="text-align:center;padding:40px 20px;color:#6B7280;"><div style="font-size:48px;margin-bottom:10px;">🔍</div><div style="font-size:16px;font-weight:600;">No items match "${q}"</div></div>`
-                    : '<div style="text-align:center;padding:40px 20px;color:#6B7280;"><div style="font-size:48px;margin-bottom:10px;">📦</div><div style="font-size:16px;font-weight:600;">No TreasureMart Inventory</div></div>';
+                    : '<div style="text-align:center;padding:40px 20px;color:#6B7280;"><div style="font-size:48px;margin-bottom:10px;">📦</div><div style="font-size:16px;font-weight:600;">Nothing in the Crazy Chicks room</div></div>';
                 return;
             }
 
             listDiv.innerHTML = tmItems.map(item => {
-                const eQ    = item.channels?.treasuremarts || 0;
-                const price  = getChannelPrice(item, 'treasuremarts');
-                const margin = item.channelMargins?.treasuremarts ?? null;
+                const eQ    = item.channels?.crazychicks || 0;
+                const price  = getChannelPrice(item, 'crazychicks');
+                const margin = item.channelMargins?.crazychicks ?? null;
                 const as     = treasureMartAudit[item.id] || { status: 'unchecked', foundQty: eQ, note: '' };
                 const st     = as.status;
                 const fQ     = as.foundQty !== undefined ? as.foundQty : eQ;
@@ -2104,7 +2228,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
         function adjustTMQty(itemId, delta) {
             const item = inventory.find(i => String(i.id) === String(itemId));
             if (!item) return;
-            const eQ = item.channels?.treasuremarts || 0;
+            const eQ = item.channels?.crazychicks || 0;
             if (!treasureMartAudit[itemId]) treasureMartAudit[itemId] = { status: 'unchecked', foundQty: eQ, note: '' };
             const nF = Math.max(0, Math.min(eQ, treasureMartAudit[itemId].foundQty + delta));
             treasureMartAudit[itemId].foundQty = nF;
@@ -2115,8 +2239,8 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
         function setTMStatus(itemId, status) {
             const item = inventory.find(i => String(i.id) === String(itemId));
             if (!item) return;
-            const eQ = item.channels?.treasuremarts || 0;
-            if (status === 'removed' && !confirm('Move ' + eQ + ' unit(s) back to Warehouse?')) return;
+            const eQ = item.channels?.crazychicks || 0;
+            if (status === 'removed' && !confirm(eQ + ' unit(s) brought back from Crazy Chicks to the warehouse shelf?\n(The warehouse number does not change — it already counts them.)')) return;
             if (!treasureMartAudit[itemId]) treasureMartAudit[itemId] = { status: 'unchecked', foundQty: eQ, note: '' };
             treasureMartAudit[itemId].status = status;
             if      (status === 'found')                           treasureMartAudit[itemId].foundQty = eQ;
@@ -2135,7 +2259,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
             document.getElementById('saleQty').value   = 1;
             document.getElementById('saleDate').value  = new Date().toISOString().split('T')[0];
             document.getElementById('saleNotes').value = '';
-            document.getElementById('saleChannel').value = 'treasuremarts';
+            document.getElementById('saleChannel').value = 'crazychicks';
             updateSalePrice();
             document.getElementById('saleModal').classList.add('active');
             // TM modal stays open behind — renderTMList() fires after sale completes via re-sync
@@ -2143,7 +2267,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
 
         function addTMQuickNote(itemId, qn) {
             const item = inventory.find(i => String(i.id) === String(itemId));
-            if (!treasureMartAudit[itemId]) treasureMartAudit[itemId] = { status: 'unchecked', foundQty: item?.channels?.treasuremarts || 0, note: '' };
+            if (!treasureMartAudit[itemId]) treasureMartAudit[itemId] = { status: 'unchecked', foundQty: item?.channels?.crazychicks || 0, note: '' };
             let n = treasureMartAudit[itemId].note || '';
             if (n.includes(qn)) n = n.replace(qn, '').replace(/,\s*,/g, ',').replace(/^,\s*|,\s*$/g, '').trim();
             else n = n ? n + ', ' + qn : qn;
@@ -2155,201 +2279,146 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
             const el = document.getElementById('tm-note-' + itemId);
             if (!el) return;
             const item = inventory.find(i => String(i.id) === String(itemId));
-            if (!treasureMartAudit[itemId]) treasureMartAudit[itemId] = { status: 'unchecked', foundQty: item?.channels?.treasuremarts || 0, note: '' };
+            if (!treasureMartAudit[itemId]) treasureMartAudit[itemId] = { status: 'unchecked', foundQty: item?.channels?.crazychicks || 0, note: '' };
             treasureMartAudit[itemId].note = el.value;
             saveTreasureMartAuditState();
         }
 
         function resetTreasureMartAudit() {
             if (!confirm('Reset all audit checkmarks?')) return;
-            treasureMartAudit = {}; localStorage.removeItem('ccd_tm_audit');
+            treasureMartAudit = {}; localStorage.removeItem('ccd_room_audit');
             renderTMList(); showToast('Audit reset', 'success');
         }
 
-        // saveAuditToSupabase — writes full audit snapshot to tm_audits + tm_audit_items
-        // Called after all item qty changes are successfully saved to DB.
-        async function saveAuditToSupabase(auditSnapshot) {
+        // v4.4.0 (S103): the Crazy Chicks ROOM audit writes the header + item rows to
+        // tm_audits / tm_audit_items with channel = 'crazychicks' (S103 M1-02, decision D3).
+        async function saveAuditToSupabase(auditSnapshot, expectedById) {
             if (!sbClient || !sbConnected) return;
             try {
-                // Build counts and value totals
-                const tmItems = inventory.filter(i => (i.channels?.treasuremarts || 0) > 0 || auditSnapshot[String(i.id)]);
-                let totalExpected = 0, totalFound = 0, totalPartialCount = 0,
-                    totalMissingCount = 0, totalRemovedCount = 0,
-                    valExpected = 0, valFound = 0;
-
+                let totalExpected = 0, totalFound = 0, totalPartialCount = 0, totalMissingCount = 0, totalRemovedCount = 0, valExpected = 0, valFound = 0;
                 const itemRows = [];
-                for (const item of tmItems) {
-                    const as       = auditSnapshot[String(item.id)];
-                    const eQ       = item.channels?.treasuremarts || 0;
-                    const price    = item.channelPrices?.treasuremarts || item.retailPrice || 0;
-                    const status   = as?.status || 'found';
-                    const foundQty = status === 'missing'  ? 0
-                                   : status === 'partial'  ? (as?.foundQty || 0)
-                                   : status === 'removed'  ? 0
-                                   : eQ; // found
-
-                    totalExpected += eQ;
-                    totalFound    += foundQty;
-                    valExpected   += eQ * price;
-                    valFound      += foundQty * price;
-
-                    if      (status === 'missing')  totalMissingCount += eQ;
-                    else if (status === 'partial')  totalPartialCount += (eQ - foundQty);
-                    else if (status === 'removed')  totalRemovedCount += eQ;
-
-                    itemRows.push({
-                        item_id:        item.id || null,
-                        sku:            item.sku,
-                        product_name:   item.productName  || null,
-                        brand_name:     item.brandName    || null,
-                        expected_qty:   eQ,
-                        found_qty:      foundQty,
-                        status:         status,
-                        price_at_audit: price || null,
-                        notes:          as?.note || null,
-                    });
+                for (const [id, eQ] of Object.entries(expectedById)) {
+                    const item = inventory.find(i => String(i.id) === String(id));
+                    if (!item) continue;
+                    const as = auditSnapshot[String(id)];
+                    const price = item.channelPrices?.crazychicks || item.retailPrice || 0;
+                    const status = as?.status || 'found';
+                    const foundQty = status === 'partial' ? (as?.foundQty || 0) : (status === 'found' ? eQ : 0);
+                    totalExpected += eQ; totalFound += foundQty;
+                    valExpected += eQ * price; valFound += foundQty * price;
+                    if (status === 'missing') totalMissingCount += eQ;
+                    else if (status === 'partial') totalPartialCount += (eQ - foundQty);
+                    else if (status === 'removed') totalRemovedCount += eQ;
+                    itemRows.push({ item_id: item.id, sku: item.sku, product_name: item.productName || null, brand_name: item.brandName || null,
+                                    expected_qty: eQ, found_qty: foundQty, status, price_at_audit: price || null, notes: as?.note || null });
                 }
-
-                // Insert audit header
-                const { data: auditHeader, error: headerErr } = await sbClient
-                    .from('tm_audits')
-                    .insert({
-                        audit_date:           new Date().toISOString().split('T')[0],
-                        total_items_expected: totalExpected,
-                        total_items_found:    totalFound,
-                        total_items_partial:  totalPartialCount,
-                        total_items_missing:  totalMissingCount,
-                        total_items_removed:  totalRemovedCount,
-                        total_value_expected: parseFloat(valExpected.toFixed(2)),
-                        total_value_found:    parseFloat(valFound.toFixed(2)),
-                        created_by:           'mobile',
-                    })
-                    .select('id')
-                    .single();
-
-                if (headerErr) { console.warn('Audit header save failed:', headerErr.message); return; }
-
-                // Attach audit_id to each item row and insert in bulk
-                const auditId = auditHeader.id;
-                const rowsWithId = itemRows.map(r => ({ ...r, audit_id: auditId }));
-
-                // Insert in batches of 50 to avoid request size limits
-                for (let i = 0; i < rowsWithId.length; i += 50) {
-                    const batch = rowsWithId.slice(i, i + 50);
-                    const { error: itemErr } = await sbClient.from('tm_audit_items').insert(batch);
-                    if (itemErr) console.warn('Audit items batch save failed:', itemErr.message);
+                const { data: hdr, error: hErr } = await sbClient.from('tm_audits').insert({
+                    channel: ROOM, audit_date: new Date().toISOString().split('T')[0],
+                    total_items_expected: totalExpected, total_items_found: totalFound, total_items_partial: totalPartialCount,
+                    total_items_missing: totalMissingCount, total_items_removed: totalRemovedCount,
+                    total_value_expected: parseFloat(valExpected.toFixed(2)), total_value_found: parseFloat(valFound.toFixed(2)),
+                    created_by: 'mobile'
+                }).select('id').single();
+                if (hErr) { showResult('⚠️ The stock changes were saved, but the audit record was NOT: ' + hErr.message, 'warning'); return; }
+                const rows = itemRows.map(r => ({ ...r, audit_id: hdr.id }));
+                for (let i = 0; i < rows.length; i += 50) {
+                    const { error } = await sbClient.from('tm_audit_items').insert(rows.slice(i, i + 50));
+                    if (error) showResult('⚠️ Part of the audit detail was NOT saved: ' + error.message, 'warning');
                 }
-
-            } catch (e) { console.warn('saveAuditToSupabase error:', e.message); }
+            } catch (e) { showResult('⚠️ Audit record error: ' + e.message, 'warning'); }
         }
 
+        // v4.4.0 (S103): the ROOM audit's math follows L-4 — room stock is INSIDE the
+        // warehouse number. (The TM audit this replaces added "Removed" units back onto the
+        // warehouse — counting them twice — and left "Missing" units in the warehouse.)
+        //   Found    → nothing.
+        //   Removed  → Crazy Chicks −n. Warehouse UNCHANGED: the units were always counted.
+        //   Missing / Partial → RECORDED ONLY — NOTHING IS WRITTEN OFF HERE (Paul, S103 option A).
+        //              Crazy Chicks sales happen at THEIR register and are entered weekly, so a
+        //              unit not on the shelf is most likely sold-but-not-yet-entered; writing it
+        //              off would take it off a second time when the sale is entered. After the
+        //              week's sales are in, each still-missing item is written off deliberately,
+        //              one tap each, from Audit History (writeOffAuditItem).
+        // Every item is re-read by id first; one failure does not stop the others.
         async function saveTreasureMartAudit() {
+            if (!requireOnline()) return;
             const changes = [];
             let totalMissing = 0, totalPartial = 0, totalRemoved = 0;
-
-            // Capture snapshot of audit state BEFORE changes (needed for saveAuditToSupabase)
             const auditSnapshot = { ...treasureMartAudit };
-
+            const expectedById = {};
+            for (const item of inventory) if ((item.channels?.crazychicks || 0) > 0) expectedById[String(item.id)] = item.channels.crazychicks;
             for (const [itemId, as] of Object.entries(treasureMartAudit)) {
                 if (typeof as !== 'object') continue;
-                const item = inventory.find(i => String(i.id) === String(itemId));
-                if (!item) continue;
-                const eQ = item.channels?.treasuremarts || 0;
-
-                if (as.status === 'missing') {
-                    changes.push({ item, action: 'missing', deductQty: eQ }); totalMissing += eQ;
-                } else if (as.status === 'partial') {
-                    const mQ = eQ - (as.foundQty || 0);
-                    if (mQ > 0) { changes.push({ item, action: 'partial', deductQty: mQ }); totalPartial += mQ; }
-                } else if (as.status === 'removed') {
-                    changes.push({ item, action: 'removed', restoreQty: eQ }); totalRemoved += eQ;
-                }
+                const eQ = expectedById[String(itemId)] || 0;
+                if (!eQ) continue;
+                if (as.status === 'missing') totalMissing += eQ;
+                else if (as.status === 'partial') { const m = eQ - (as.foundQty || 0); if (m > 0) totalPartial += m; }
+                else if (as.status === 'removed') { changes.push({ itemId, action: 'removed', n: eQ }); totalRemoved += eQ; }
             }
-
-            if (changes.length === 0) { showToast('No changes (all found)', 'success'); return; }
-
-            let msg = 'Save audit?\n';
-            if (totalMissing) msg += '• ' + totalMissing + ' units MISSING (written off)\n';
-            if (totalPartial) msg += '• ' + totalPartial + ' units PARTIAL missing (written off)\n';
-            if (totalRemoved) msg += '• ' + totalRemoved + ' units REMOVED → returned to warehouse\n';
+            if (changes.length === 0 && !totalMissing && !totalPartial) {
+                if (!confirm('Everything was found. Save this audit to the history?')) return;
+                await saveAuditToSupabase(auditSnapshot, expectedById);
+                treasureMartAudit = {}; saveTreasureMartAuditState();
+                showResult('✅ Audit saved — everything found.', 'success');
+                return;
+            }
+            let msg = 'Save the Crazy Chicks room audit?\n';
+            if (totalMissing + totalPartial) msg += `\n• ${totalMissing + totalPartial} unit(s) NOT FOUND → recorded only, nothing written off. Enter this week's Crazy Chicks sales first, then write off anything still missing from Audit History.`;
+            if (totalRemoved) msg += `\n• ${totalRemoved} unit(s) REMOVED → back on the warehouse shelf (Crazy Chicks goes down; the warehouse number does not change — it already counts them)`;
             if (!confirm(msg)) return;
 
-            let saved = 0, failed = 0;
-            const auditLog = [];
-
+            const done = [], failed = [];
             for (const ch of changes) {
-                const item      = ch.item;
-                const beforeQty = parseInt(item.qty) || 0;
-                const beforeTM  = item.channels?.treasuremarts || 0;
-
-                if (ch.action === 'missing' || ch.action === 'partial') {
-                    // Write off: zero/reduce TM channel only.
-                    // Warehouse qty (item.qty) is NOT touched — it was already reduced when
-                    // items were allocated to TM. Only Total Actual decreases (warehouse + TM).
-                    item.channels.treasuremarts = Math.max(0, beforeTM - ch.deductQty);
-                    // item.qty intentionally unchanged
-                } else if (ch.action === 'removed') {
-                    // Physically returned to warehouse: zero TM, add back to warehouse qty
-                    item.channels.treasuremarts = 0;
-                    item.qty = beforeQty + ch.restoreQty;
+                let row;
+                try { row = await fetchItemRow(ch.itemId); } catch (e) { failed.push(`item ${ch.itemId}: ${e.message}`); continue; }
+                if (isComposite(row)) { failed.push(compositeRefusal(row.sku)); continue; }
+                const n = Math.min(ch.n, pi(row.crazychicks_qty));
+                if (n <= 0) { failed.push(`${row.sku}: Crazy Chicks already 0 — nothing to change`); continue; }
+                if (ch.action === 'removed') {
+                    const { error } = await sbClient.from('items').update({ crazychicks_qty: pi(row.crazychicks_qty) - n }).eq('id', row.id);
+                    if (error) { failed.push(`${row.sku}: ${error.message}`); continue; }
+                    const after = await chqRead(row.id);
+                    await queueChannelQtyDeltas(row, after, 'room_audit_removed');
+                    done.push(`${row.sku} ${ROOM_LABEL} ${pi(row.crazychicks_qty)}→${pi(row.crazychicks_qty) - n} (back to warehouse shelf)`);
                 }
-
-                if (sbConnected) {
-                    const ok = await saveItemToSupabase(item);
-                    if (ok) {
-                        saved++;
-                        auditLog.push({
-                            sku: item.sku, productName: item.productName,
-                            action: ch.action,
-                            tmBefore: beforeTM,    tmAfter: item.channels.treasuremarts,
-                            whBefore: beforeQty,   whAfter: item.qty
-                        });
-                    } else {
-                        failed++;
-                        // Roll back in-memory changes so UI stays consistent with DB
-                        item.channels.treasuremarts = beforeTM;
-                        item.qty = beforeQty;
-                        showToast('⚠️ DB save failed for ' + (item.sku || 'item') + ' — changes rolled back', 'error');
-                    }
-                } else {
-                    // Offline: queue and accept locally
-                    saved++;
-                    addToOfflineQueue('audit_save', {
-                        sku:        item.sku,
-                        action:     ch.action,
-                        deductQty:  ch.deductQty  || 0,
-                        restoreQty: ch.restoreQty || 0
-                    });
-                    auditLog.push({ sku: item.sku, action: ch.action, offline: true });
-                }
+                await refreshItem(row.id);
             }
+            await saveAuditToSupabase(auditSnapshot, expectedById);
+            logActivity('INVENTORY', 'ROOM_AUDIT_SAVED', ROOM, `Crazy Chicks room audit: ${done.length} changed, ${failed.length} failed`, { done, failed, missing: totalMissing, partial: totalPartial, removed: totalRemoved }, null);
+            treasureMartAudit = {}; saveTreasureMartAuditState();
+            const nf = totalMissing + totalPartial;
+            const nfText = nf ? ` · ${nf} unit(s) not found — enter this week's Crazy Chicks sales, then write off what is still missing from 📋 History.` : '';
+            if (failed.length) showResult(`⚠️ Audit saved: ${done.length} changed, ${failed.length} NOT changed — ${failed.join(' · ')}${nfText}`, 'warning');
+            else showResult(`✅ Audit saved: ${done.length} item(s) updated${nfText}`, nf ? 'warning' : 'success');
+            showRoomAudit(true);
+        }
 
-            // Save full audit snapshot to tm_audits + tm_audit_items (online only)
-            if (sbConnected && saved > 0) {
-                await saveAuditToSupabase(auditSnapshot);
-            }
-
-            if (auditLog.length > 0) {
-                logActivity('TM_AUDIT_SAVED', {
-                    totalSaved: saved, totalFailed: failed,
-                    missing: totalMissing, partial: totalPartial, removed: totalRemoved,
-                    items: auditLog
-                });
-            }
-
-            // NOTE: saveToStorage() intentionally removed
-            applyFilters(); updateStats();
-            treasureMartAudit = {}; localStorage.removeItem('ccd_tm_audit');
-
-            if (failed > 0) showToast('⚠️ ' + saved + ' saved, ' + failed + ' failed — check log', 'warning');
-            else            showToast('✅ Audit saved! ' + saved + ' items updated', 'success');
-
-            if (sbConnected) {
-                // Re-sync from DB so inventory list reflects the saved changes
-                setTimeout(async () => { await loadFromSupabase(); showTreasureMartReport(); }, 1000);
-            } else {
-                showTreasureMartReport(); // re-open with fresh sorted list after save
-            }
+        // v4.4.0 (S103, option A): write off ONE not-found audit row, deliberately, after the
+        // week's Crazy Chicks sales have been entered. Re-reads the item: if its Crazy Chicks
+        // number has since dropped (the sale was entered), only what is STILL unaccounted for
+        // is written off. The audit row's notes get a marker so it cannot be written off twice
+        // (tm_audit_items.status is check-constrained; no schema change needed).
+        const AUDIT_WO_MARK = '[WRITTEN OFF';
+        async function writeOffAuditItem(auditItemId, auditId) {
+            if (!requireOnline()) return;
+            try {
+                const { data: ai, error } = await sbClient.from('tm_audit_items').select('*').eq('id', auditItemId).single();
+                if (error || !ai) throw new Error('Could not read the audit row' + (error ? ': ' + error.message : ''));
+                if (String(ai.notes || '').includes(AUDIT_WO_MARK)) { showToast('Already written off from this audit.', 'error'); return; }
+                const notFound = Math.max(0, pi(ai.expected_qty) - pi(ai.found_qty));
+                if (!ai.item_id || !notFound) { showToast('Nothing to write off for this row.', 'error'); return; }
+                const row = await fetchItemRow(ai.item_id);
+                const n = Math.min(notFound, pi(row.crazychicks_qty));
+                if (n <= 0) { showToast(`${row.sku}: Crazy Chicks already shows 0 — it was probably sold and entered. Nothing written off.`, 'success'); return; }
+                const partNote = n < notFound ? `\n(${notFound} were not found; Crazy Chicks now shows ${pi(row.crazychicks_qty)}, so only ${n} is still unaccounted for.)` : '';
+                if (!confirm(`Write off ${n} × ${row.sku} as MISSING from the Crazy Chicks room?\n\nOnly do this after this week's Crazy Chicks sales are entered.${partNote}\n\nwarehouse ${pi(row.qty)}→${Math.max(0, pi(row.qty) - n)}\n${ROOM_LABEL} ${pi(row.crazychicks_qty)}→${pi(row.crazychicks_qty) - n}`)) return;
+                const out = await writeOffUnits(row, n, 'Missing', ROOM_LABEL, `Crazy Chicks room audit ${auditId || ''}`.trim(), 'Mobile — room audit');
+                if (!out.ok) { showResult(out.message, 'error'); return; }
+                await sbClient.from('tm_audit_items').update({ notes: `${ai.notes ? ai.notes + ' ' : ''}${AUDIT_WO_MARK} ${n} on ${new Date().toISOString().substring(0, 10)}]` }).eq('id', auditItemId);
+                await refreshItem(row.id);
+                showResult(out.message, out.warn ? 'warning' : 'success');
+                if (auditId) showAuditDetail(auditId);
+            } catch (e) { showToast('Write-off failed: ' + e.message, 'error'); }
         }
 
         function closeTreasureMartModal() { document.getElementById('treasureMartModal').classList.remove('active'); }
@@ -2379,6 +2448,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                 const { data, error } = await sbClient
                     .from('tm_audits')
                     .select('*')
+                    .eq('channel', ROOM)
                     .order('audit_date', { ascending: false })
                     .order('created_at', { ascending: false })
                     .limit(30);
@@ -2499,6 +2569,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                                     </div>
                                 </div>
                                 ${item.notes ? `<div style="font-size:11px;color:#6B7280;margin-top:4px;font-style:italic;">📝 ${item.notes}</div>` : ''}
+                                ${(item.status === 'missing' || item.status === 'partial') && !String(item.notes || '').includes('[WRITTEN OFF') ? `<button onclick="writeOffAuditItem('${item.id}','${auditId}')" style="margin-top:6px;padding:6px 10px;border:none;border-radius:6px;background:#DC2626;color:white;font-size:12px;font-weight:600;cursor:pointer;">✗ Write off what is still missing</button>` : ''}
                             </div>`;
                         }
                     }
@@ -2522,8 +2593,8 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                 if (as.status === 'missing' || as.status === 'partial' || as.status === 'removed') {
                     const item = inventory.find(i => String(i.id) === String(id));
                     if (!item) continue;
-                    const price = getChannelPrice(item, 'treasuremarts');
-                    const eQ    = item.channels?.treasuremarts || 0;
+                    const price = getChannelPrice(item, 'crazychicks');
+                    const eQ    = item.channels?.crazychicks || 0;
                     const mQ    = as.status === 'missing' ? eQ : (as.status === 'partial' ? eQ - (as.foundQty||0) : eQ);
                     issues.push({ ...item, status: as.status, expectedQty: eQ, foundQty: as.foundQty||0, missingQty: mQ, tmPrice: price, note: as.note || '' });
                     totalIssues += mQ;
@@ -2581,15 +2652,15 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                 if (['missing','partial','removed'].includes(as.status)) {
                     const item = inventory.find(i => String(i.id) === String(id));
                     if (!item) continue;
-                    const p  = getChannelPrice(item, 'treasuremarts');
-                    const eQ = item.channels?.treasuremarts || 0;
+                    const p  = getChannelPrice(item, 'crazychicks');
+                    const eQ = item.channels?.crazychicks || 0;
                     const mQ = as.status === 'missing' ? eQ : (as.status === 'partial' ? eQ - (as.foundQty||0) : eQ);
                     const val = p != null ? mQ * p : 0;
                     items.push({ name: item.productName, brand: item.brandName, sku: item.sku, status: as.status.toUpperCase(), qty: mQ, val, note: as.note });
                     tv += val;
                 }
             }
-            const lines = ['TREASUREMART AUDIT ISSUES', '='.repeat(40), 'Date: ' + new Date().toLocaleString(), ''];
+            const lines = ['CRAZY CHICKS ROOM AUDIT ISSUES', '='.repeat(40), 'Date: ' + new Date().toLocaleString(), ''];
             items.forEach((i, n) => {
                 lines.push((n+1) + '. [' + i.status + '] ' + i.name, '   Brand: ' + i.brand, '   SKU: ' + i.sku, '   Value: $' + i.val.toFixed(2));
                 if (i.note) lines.push('   Note: ' + i.note);
@@ -2604,13 +2675,13 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
         // ============================================================================
 
         function exportTreasureMartPDF() {
-            const tmItems = inventory.filter(i => (i.channels?.treasuremarts||0) > 0);
+            const tmItems = inventory.filter(i => (i.channels?.crazychicks||0) > 0);
             tmItems.sort((a,b) => (a.brandName||'ZZZ').localeCompare(b.brandName||'ZZZ') || (a.productName||'').localeCompare(b.productName||''));
             let tI = 0, tV = 0;
             const rows = tmItems.map(i => {
-                const q      = i.channels.treasuremarts || 0;
-                const price  = getChannelPrice(i, 'treasuremarts');
-                const margin = i.channelMargins?.treasuremarts ?? null;
+                const q      = i.channels.crazychicks || 0;
+                const price  = getChannelPrice(i, 'crazychicks');
+                const margin = i.channelMargins?.crazychicks ?? null;
                 tI += q; tV += q * (price ?? 0);
 
                 const as = treasureMartAudit[i.id];
@@ -2624,20 +2695,20 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                 const marginStr = margin != null ? margin.toFixed(1) + '%'    : '---';
                 return `<tr style="${rs}"><td style="padding:6px;border:1px solid #ddd;text-align:center;font-size:16px;">${st}</td><td style="padding:6px;border:1px solid #ddd;">${i.brandName||'N/A'}</td><td style="padding:6px;border:1px solid #ddd;">${i.productName||''}</td><td style="padding:6px;border:1px solid #ddd;">${i.sku||''}</td><td style="padding:6px;border:1px solid #ddd;text-align:center;">${q}</td><td style="padding:6px;border:1px solid #ddd;text-align:right;">${priceStr}</td><td style="padding:6px;border:1px solid #ddd;text-align:right;">${marginStr}</td></tr>`;
             }).join('');
-            const html = `<!DOCTYPE html><html><head><title>TM Audit</title><style>body{font-family:Arial;padding:20px;font-size:11px;}h1{color:#059669;font-size:20px;}.btn{padding:12px 20px;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;}table{width:100%;border-collapse:collapse;font-size:11px;}th{background:#059669;color:white;padding:8px;}@media print{.no-print{display:none;}}</style></head><body><div class="no-print"><button class="btn" style="background:#6B7280;color:white;" onclick="window.close()">← Back</button> <button class="btn" style="background:#059669;color:white;" onclick="window.print()">🖨️ Print</button></div><h1>🐮 TreasureMart Audit</h1><div style="color:#666;margin-bottom:20px;">${new Date().toLocaleString()}</div><table><thead><tr><th>St</th><th>Brand</th><th>Product</th><th>SKU</th><th>Qty</th><th>Price</th><th>Margin</th></tr></thead><tbody>${rows}</tbody></table><div style="font-weight:bold;margin-top:10px;">Total: ${tI} items, $${tV.toFixed(2)}</div><div style="margin-top:10px;font-size:11px;color:#666;">○=Unchecked ✓=Found ◐=Partial ✗=Missing ↩=Removed | --- = not yet populated by desktop</div></body></html>`;
+            const html = `<!DOCTYPE html><html><head><title>Crazy Chicks Room Audit</title><style>body{font-family:Arial;padding:20px;font-size:11px;}h1{color:#059669;font-size:20px;}.btn{padding:12px 20px;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;}table{width:100%;border-collapse:collapse;font-size:11px;}th{background:#059669;color:white;padding:8px;}@media print{.no-print{display:none;}}</style></head><body><div class="no-print"><button class="btn" style="background:#6B7280;color:white;" onclick="window.close()">← Back</button> <button class="btn" style="background:#059669;color:white;" onclick="window.print()">🖨️ Print</button></div><h1>🐥 Crazy Chicks Room Audit</h1><div style="color:#666;margin-bottom:20px;">${new Date().toLocaleString()}</div><table><thead><tr><th>St</th><th>Brand</th><th>Product</th><th>SKU</th><th>Qty</th><th>Price</th><th>Margin</th></tr></thead><tbody>${rows}</tbody></table><div style="font-weight:bold;margin-top:10px;">Total: ${tI} items, $${tV.toFixed(2)}</div><div style="margin-top:10px;font-size:11px;color:#666;">○=Unchecked ✓=Found ◐=Partial ✗=Missing ↩=Removed | --- = not yet populated by desktop</div></body></html>`;
             const w = window.open('', '_blank');
             if (w) { w.document.write(html); w.document.close(); } else showToast('Enable popups', 'error');
         }
 
         function exportTreasureMartExcel() {
-            const tmItems = inventory.filter(i => (i.channels?.treasuremarts||0) > 0);
+            const tmItems = inventory.filter(i => (i.channels?.crazychicks||0) > 0);
             tmItems.sort((a,b) => (a.brandName||'ZZZ').localeCompare(b.brandName||'ZZZ'));
             const rows = ['Status,Brand,Product,SKU,Qty,Price,Margin'];
             let tI = 0, tV = 0;
             tmItems.forEach(i => {
-                const q      = i.channels.treasuremarts || 0;
-                const price  = getChannelPrice(i, 'treasuremarts');
-                const margin = i.channelMargins?.treasuremarts ?? null;
+                const q      = i.channels.crazychicks || 0;
+                const price  = getChannelPrice(i, 'crazychicks');
+                const margin = i.channelMargins?.crazychicks ?? null;
                 tI += q; tV += q * (price ?? 0);
 
                 const as = treasureMartAudit[i.id];
@@ -2656,7 +2727,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
             const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
             const a    = document.createElement('a');
             a.href     = URL.createObjectURL(blob);
-            a.download = 'TM_Audit_' + new Date().toISOString().split('T')[0] + '.csv';
+            a.download = 'Crazy_Chicks_Audit_' + new Date().toISOString().split('T')[0] + '.csv';
             document.body.appendChild(a); a.click(); document.body.removeChild(a);
             showToast('Excel downloaded!', 'success');
         }
@@ -2678,7 +2749,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
         function openAddItemModal() {
             ['newProductName','newSku','newBrand','newShelf'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
             document.getElementById('newQty').value = 1;
-            ['newEtsy','newWix','newWayfair','newTreasureMarts'].forEach(id => { const el = document.getElementById(id); if (el) el.value = 0; });
+            ['newEtsy','newWix','newWayfair','newCrazyChicks'].forEach(id => { const el = document.getElementById(id); if (el) el.value = 0; });
             updateNewItemTotal();
             document.getElementById('addItemModal').classList.add('active');
         }
@@ -2686,72 +2757,44 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
         function closeAddItemModalOutside(e) { if (e.target === e.currentTarget) closeAddItemModal(); }
 
         function updateNewItemTotal() {
-            const t = (parseInt(document.getElementById('newEtsy').value)||0)
-                    + (parseInt(document.getElementById('newWix').value)||0)
-                    + (parseInt(document.getElementById('newWayfair').value)||0)
-                    + (parseInt(document.getElementById('newTreasureMarts').value)||0);
+            const t = Math.max(0, (parseInt(document.getElementById('newQty').value) || 0) - (parseInt(document.getElementById('newCrazyChicks').value) || 0));
             document.getElementById('newItemTotalQty').textContent = t;
         }
 
         async function saveNewItem() {
+            // v4.4.0 (S103): online only (D1); both rooms/booths in the guard; no Etsy=Wix rule;
+            // duplicate SKU checked against the DATABASE, not the cached list.
+            if (!requireOnline()) return;
             const name = document.getElementById('newProductName').value.trim();
             const sku  = document.getElementById('newSku').value.trim().toUpperCase();
             if (!name) { showToast('Product name is required', 'error'); return; }
-            if (!sku)  { showToast('SKU is required',          'error'); return; }
-            if (inventory.find(i => i.sku === sku)) { showToast('SKU already exists: ' + sku, 'error'); return; }
-
-            const qty   = parseInt(document.getElementById('newQty').value) || 0;
+            if (!sku)  { showToast('SKU is required', 'error'); return; }
+            const qty = pi(document.getElementById('newQty').value);
             const alloc = {
-                etsy:          parseInt(document.getElementById('newEtsy').value)          || 0,
-                wix:           parseInt(document.getElementById('newWix').value)           || 0,
-                wayfair:       parseInt(document.getElementById('newWayfair').value)       || 0,
-                treasuremarts: parseInt(document.getElementById('newTreasureMarts').value) || 0,
-                crazychicks:   0
+                etsy:        pi(document.getElementById('newEtsy').value),
+                wix:         pi(document.getElementById('newWix').value),
+                wayfair:     pi(document.getElementById('newWayfair').value),
+                crazychicks: pi(document.getElementById('newCrazyChicks').value),
+                treasuremarts: 0
             };
-            if (alloc.etsy !== alloc.wix) { showToast('Etsy and Wix must match', 'error'); return; }
-
+            if (alloc.crazychicks > qty) { showToast(`${ROOM_LABEL} ${alloc.crazychicks} is more than the warehouse ${qty}`, 'error'); return; }
+            const avail = qty - alloc.crazychicks;
+            for (const ch of ONLINE_CHANNELS) if (alloc[ch] > avail) { showToast(`${CH_LABEL[ch]} ${alloc[ch]} is more than available online ${avail}`, 'error'); return; }
+            const { data: dupe } = await sbClient.from('items').select('id').eq('sku', sku).limit(1);
+            if (dupe && dupe.length) { showToast('SKU already exists: ' + sku, 'error'); return; }
             const newItem = {
-                sku, productName: name,
-                brandName:   document.getElementById('newBrand').value.trim(),
-                shelfNumber: document.getElementById('newShelf').value.trim(),
-                qty, isActive: true, comments: '',
-                // Financial fields are null — desktop populates them on first save
-                wholesalePrice: null, retailPrice: null,
-                ibShipping: null, tariff: null, obShipping: null, coopPrice: null,
-                channels: alloc,
-                channelPrices:       { etsy: null, wix: null, wayfair: null, crazychicks: null, treasuremarts: null },
-                channelNetProfit:    { etsy: null, wix: null, wayfair: null, crazychicks: null, treasuremarts: null },
-                channelMargins:      { etsy: null, wix: null, wayfair: null, crazychicks: null, treasuremarts: null },
-                totalCostBasis:      null,
-                channelPriceAdjustments: { etsy:0, wix:0, wayfair:0, crazychicks:0, treasuremarts:0 },
-                channelParEnabled: false, channelParMin: 0, minParLevel: 0, maxParLevel: 0,
-                lastSoldDate: null, lastSoldChannel: null
+                sku, productName: name, brandName: document.getElementById('newBrand').value.trim(),
+                shelfNumber: document.getElementById('newShelf').value.trim(), qty, isActive: true, comments: '',
+                channels: alloc
             };
-
-            if (sbConnected) {
-                try {
-                    const row = itemToSbRow(newItem);
-                    const { data, error } = await sbClient.from('items').insert(row).select().single();
-                    if (error) throw error;
-                    newItem.id = data.id;
-                    inventory.push(newItem);
-                    applyFilters(); updateStats();
-                    // NOTE: saveToStorage() intentionally removed
-                    logActivity('ITEM_ADDED', { sku, productName: name });
-                    closeAddItemModal();
-                    showToast('✅ ' + name + ' added!', 'success');
-                } catch (e) {
-                    showToast('Save failed: ' + e.message, 'error');
-                }
-            } else {
-                newItem.id = 'local_' + Date.now();
-                inventory.push(newItem);
-                applyFilters(); updateStats();
-                // NOTE: saveToStorage() intentionally removed
-                addToOfflineQueue('add_item', newItem);
-                closeAddItemModal();
-                showToast('Saved offline — will sync when connected', 'warning');
-            }
+            const row = itemToSbRow(newItem);
+            row.shelf_number = newItem.shelfNumber || null;
+            const { data, error } = await sbClient.from('items').insert(row).select().single();
+            if (error) { showToast('Save failed: ' + error.message, 'error'); return; }
+            logActivity('INVENTORY', 'ITEM_CREATED', null, `Created ${sku} on the phone`, { qty, alloc }, sku);
+            closeAddItemModal();
+            await refreshItem(data.id);
+            showToast('✅ ' + name + ' added! Prices are set in Inventory V2.', 'success');
         }
 
         // ============================================================================
@@ -2797,7 +2840,8 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
             let rows = salesHistoryCache;
             if (chFilter) rows = rows.filter(r => (r.sale_channel || '').toLowerCase() === chFilter);
 
-            const activeRows = rows.filter(r => r.status !== 'reversed');
+            // v4.4.0 (L-3): reversed AND cancelled sales are not sales.
+            const activeRows = rows.filter(r => r.status !== 'reversed' && r.status !== 'cancelled');
             const totalSales   = activeRows.length;
             const totalUnits   = activeRows.reduce((s,r) => s + (r.qty_sold||0), 0);
             const totalRevenue = activeRows.reduce((s,r) => s + (r.total_revenue || (r.sale_price||0)*(r.qty_sold||1)), 0);
@@ -2814,19 +2858,19 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
                 return;
             }
 
-            const badgeClass = ch => ({ etsy:'badge-etsy', wix:'badge-wix', wayfair:'badge-wayfair', treasuremarts:'badge-treasuremarts' }[ch] || 'badge-other');
+            const badgeClass = ch => ({ etsy:'badge-etsy', wix:'badge-wix', wayfair:'badge-wayfair', treasuremarts:'badge-treasuremarts', crazychicks:'badge-crazychicks' }[ch] || 'badge-other');
             list.innerHTML = rows.map((r, idx) => {
                 const ch      = (r.sale_channel || '').toLowerCase();
                 const revenue = r.total_revenue || ((r.sale_price||0) * (r.qty_sold||1));
                 const dateStr = r.sale_date ? new Date(r.sale_date + 'T12:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric', year:'2-digit' }) : '—';
-                const isReversed = r.status === 'reversed';
+                const isReversed = r.status === 'reversed' || r.status === 'cancelled';
                 return `<div class="sale-hist-row" style="${isReversed?'opacity:0.45;':''}">
                     <div class="sale-hist-left">
                         <div class="sale-hist-product" style="${isReversed?'text-decoration:line-through;':''}">${r.product_name || r.sku || 'Unknown'}</div>
                         <div class="sale-hist-meta">
                             <span class="channel-badge ${badgeClass(ch)}">${ch || '?'}</span>
                             &nbsp;SKU: ${r.sku || '—'} &nbsp;·&nbsp; ${dateStr}
-                            ${isReversed ? '&nbsp;<span style="color:#DC2626;font-weight:700;font-size:10px;">REVERSED</span>' : ''}
+                            ${isReversed ? '&nbsp;<span style="color:#DC2626;font-weight:700;font-size:10px;">' + String(r.status).toUpperCase() + '</span>' : ''}
                         </div>
                     </div>
                     <div class="sale-hist-right" style="text-align:right;">
@@ -2839,123 +2883,72 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
         }
 
         // ============================================================================
-        // REVERSE SALE (v4.3 — ECOSYSTEM-011 symmetric peer-increment + Model B TM)
+        // REVERSE SALE — v4.4.0 (S103): Inventory V2 reverseSale (L5192), singles only.
+        // Pre-image written first (abort if it cannot be); terminal-status guard; stock by
+        // item id; source + online peers with a listing ID get +qty (ECOSYSTEM-011 reverse,
+        // K-8 asymmetry kept as V2 has it); a Crazy Chicks sale returns to the room.
+        // A Set/bundle sale is reversed in V2, where the engine returns the pieces.
         // ============================================================================
         async function reverseSaleMobile(idx) {
             const sale = salesHistoryCache && salesHistoryCache[idx];
             if (!sale) return;
-            if (!sbClient || !sbConnected) { showToast('Not connected to database', 'error'); return; }
-
-            const qty = parseInt(sale.qty_sold) || 1;
+            if (!requireOnline()) return;
+            const qty = pi(sale.qty_sold) || 1;
             const channel = sale.sale_channel || 'unknown';
-            const sku = sale.sku || '—';
-
-            if (!confirm(
-                `Reverse this sale?\n\n` +
-                `${sale.product_name || sku}\n` +
-                `Order: ${sale.order_id || '—'}\n` +
-                `Channel: ${channel} · Qty: ${qty}\n` +
-                `$${(parseFloat(sale.sale_price)||0).toFixed(2)}\n\n` +
-                `This will restore ${qty} unit(s) to warehouse and push corrected qty to channels.`
-            )) return;
-
+            if (!confirm(`Reverse this sale?\n\n${sale.product_name || sale.sku}\nChannel: ${CH_LABEL[channel] || channel} · Qty: ${qty}\n$${pf(sale.sale_price).toFixed(2)}\n\nThis restores ${qty} unit(s) and pushes the corrected quantities.`)) return;
             try {
-                // 1. Mark sale as reversed
-                const { error: saleErr } = await sbClient.from('sales_history').update({
-                    status: 'reversed',
-                    reversed_at: new Date().toISOString(),
-                    notes: (sale.notes || '') + ` | REVERSED ${new Date().toISOString().substring(0,10)} via Mobile`
+                const { data: freshSale, error: sErr } = await sbClient.from('sales_history').select('id,item_id,sku,qty_sold,status,reversed_at,notes').eq('id', sale.id).single();
+                if (sErr || !freshSale) throw new Error('Could not read the sale: ' + (sErr ? sErr.message : 'not found'));
+                if (['reversed', 'cancelled'].includes(String(freshSale.status || '').toLowerCase())) {
+                    showToast(`That sale is already ${freshSale.status} — nothing to reverse.`, 'error'); return;
+                }
+                let row;
+                if (freshSale.item_id) row = await fetchItemRow(freshSale.item_id);
+                else {
+                    const { data } = await sbClient.from('items').select(ITEM_COLS).eq('sku', freshSale.sku).limit(1);
+                    if (!data || !data.length) throw new Error('Item not found: ' + freshSale.sku);
+                    row = data[0];
+                }
+                if (isComposite(row)) { showToast(`${row.sku} is a Set/bundle — reverse its sale in Inventory V2 (the engine returns the pieces). Nothing was changed.`, 'error'); return; }
+
+                const startedAt = new Date().toISOString();
+                const { error: preErr } = await sbClient.from('activity_log').insert({
+                    category: 'SALE', action: 'sale_reversal_preimage', channel: channel || 'system',
+                    summary: `📷 Pre-reversal snapshot for sale ${sale.id} (${row.sku} x${qty}) — phone`,
+                    details: { source: 'mobile_pwa', tool_version: TOOL_VERSION, saleId: sale.id, channel, reverseStartedAt: startedAt,
+                               preImage: { capturedAt: startedAt,
+                                   items: [{ id: row.id, sku: row.sku, qty: row.qty, etsy_qty: row.etsy_qty, wix_qty: row.wix_qty, wayfair_qty: row.wayfair_qty, treasuremarts_qty: row.treasuremarts_qty, crazychicks_qty: row.crazychicks_qty }],
+                                   sales: [{ sale_id: freshSale.id, item_id: freshSale.item_id, sku: freshSale.sku, qty_sold: freshSale.qty_sold, status: freshSale.status || null, reversed_at: freshSale.reversed_at || null, notes: freshSale.notes || null }] } },
+                    sku: row.sku, device: DEVICE_LABEL, user_name: 'Mobile'
+                });
+                if (preErr) { showToast('Aborted — could not write the recovery snapshot: ' + preErr.message + '. Nothing was changed.', 'error'); return; }
+
+                const { error: markErr } = await sbClient.from('sales_history').update({
+                    status: 'reversed', reversed_at: new Date().toISOString(),
+                    notes: (freshSale.notes || '') + ` | REVERSED ${new Date().toISOString().substring(0, 10)} via Mobile`
                 }).eq('id', sale.id);
-                if (saleErr) throw new Error('Failed to mark sale: ' + saleErr.message);
+                if (markErr) throw new Error('Failed to mark the sale: ' + markErr.message);
 
-                // 2. Fetch fresh item data (v4.3 — include is_bundle for ECOSYSTEM-011 skip)
-                const { data: freshItem, error: fetchErr } = await sbClient.from('items')
-                    .select('id,qty,etsy_qty,wix_qty,wayfair_qty,treasuremarts_qty,is_bundle,etsy_listing_id,etsy_variant_id,wix_product_id,wix_variant_id,wayfair_sku')
-                    .eq('sku', sku).limit(1).single();
-                if (fetchErr || !freshItem) throw new Error('Item not found: ' + sku);
-
-                // 3. Restore quantities — ECOSYSTEM-011 symmetric peer-increment.
-                // ═══════════════════════════════════════════════════════════════════
-                // @invariant ECOSYSTEM-011 (reverse direction)
-                //   Reversing a sale mirrors the forward cascade:
-                //     - Online reverse: wh++, source++, all online peers++ (unless bundle)
-                //     - TM reverse (Model B): wh++, tm++, online peers untouched
-                //   Bundle parents skip peer-increment (symmetric to forward skip).
-                // @invariant ECOSYSTEM-001 (Model B — wh includes TM units)
-                // DO NOT REMOVE without updating all cascade paths in lockstep.
-                // ═══════════════════════════════════════════════════════════════════
-                const pi       = v => parseInt(v) || 0;
-                const isBundle = freshItem.is_bundle === true;
-                const qtyUpdates = {};
-
-                if (channel === 'treasuremarts') {
-                    // Model B reverse: both qty and TM increment; online peers untouched.
-                    qtyUpdates.qty               = pi(freshItem.qty)               + qty;
-                    qtyUpdates.treasuremarts_qty = pi(freshItem.treasuremarts_qty) + qty;
-                } else if (channel === 'etsy' || channel === 'wix' || channel === 'wayfair') {
-                    // Online reverse: warehouse + source + all online peers (symmetric).
-                    qtyUpdates.qty = pi(freshItem.qty) + qty;
-                    if (isBundle) {
-                        // Bundle parent: only source channel increments.
-                        const chMap = { etsy:'etsy_qty', wix:'wix_qty', wayfair:'wayfair_qty' };
-                        qtyUpdates[chMap[channel]] = pi(freshItem[chMap[channel]]) + qty;
-                    } else {
-                        qtyUpdates.etsy_qty    = pi(freshItem.etsy_qty)    + qty;
-                        qtyUpdates.wix_qty     = pi(freshItem.wix_qty)     + qty;
-                        qtyUpdates.wayfair_qty = pi(freshItem.wayfair_qty) + qty;
-                        // treasuremarts untouched
-                    }
-                } else {
-                    // Unknown channel — conservative fallback (restore wh + source if mappable).
-                    qtyUpdates.qty = pi(freshItem.qty) + qty;
-                    const chMap = { etsy:'etsy_qty', wix:'wix_qty', wayfair:'wayfair_qty', treasuremarts:'treasuremarts_qty' };
-                    if (chMap[channel]) {
-                        qtyUpdates[chMap[channel]] = pi(freshItem[chMap[channel]]) + qty;
+                const upd = { qty: pi(row.qty) + qty };
+                if (CH_QTY_COL[channel]) upd[CH_QTY_COL[channel]] = pi(row[CH_QTY_COL[channel]]) + qty;
+                if (ONLINE_CHANNELS.includes(channel)) {
+                    const idCol = { etsy: 'etsy_listing_id', wix: 'wix_product_id', wayfair: 'wayfair_sku' };
+                    for (const peer of ONLINE_CHANNELS) {
+                        if (peer === channel) continue;
+                        if (!row[idCol[peer]]) continue;
+                        upd[CH_QTY_COL[peer]] = pi(row[CH_QTY_COL[peer]]) + qty;
                     }
                 }
+                const { error: qtyErr } = await sbClient.from('items').update(upd).eq('id', row.id);
+                if (qtyErr) throw new Error('Qty restore failed (the sale IS marked reversed): ' + qtyErr.message);
+                const after = await chqRead(row.id);
+                const res = await queueChannelQtyDeltas(row, after, 'sale_reversal');
+                logActivity('SALE', 'SALE_REVERSED', channel, `Sale reversed on the phone: ${row.sku} x${qty} on ${channel} — qty restored (${pi(row.qty)} → ${upd.qty})`, { sale_id: sale.id, qty, channel, new_warehouse_qty: upd.qty }, row.sku);
 
-                // 4. Write qty update
-                const { error: qtyErr } = await sbClient.from('items').update(qtyUpdates).eq('id', freshItem.id);
-                if (qtyErr) throw new Error('Qty restore failed: ' + qtyErr.message);
-
-                // 5. Queue sync_queue rows
-                const syncRows = [];
-                if (freshItem.etsy_listing_id && qtyUpdates.etsy_qty !== undefined) {
-                    syncRows.push({ item_id: freshItem.id, channel:'etsy', operation:'update', fields: {
-                        sku, quantity: qtyUpdates.etsy_qty, listingId: freshItem.etsy_listing_id,
-                        etsyVariantId: freshItem.etsy_variant_id || null, fieldTypes:['quantity'], trigger:'sale_reversal'
-                    }});
-                }
-                if (freshItem.wix_product_id && qtyUpdates.wix_qty !== undefined) {
-                    syncRows.push({ item_id: freshItem.id, channel:'wix', operation:'update', fields: {
-                        sku, quantity: qtyUpdates.wix_qty, productId: freshItem.wix_product_id,
-                        wixVariantId: freshItem.wix_variant_id || null, fieldTypes:['quantity'], trigger:'sale_reversal'
-                    }});
-                }
-                if (freshItem.wayfair_sku && qtyUpdates.wayfair_qty !== undefined) {
-                    syncRows.push({ item_id: freshItem.id, channel:'wayfair', operation:'update', fields: {
-                        sku, quantity: qtyUpdates.wayfair_qty, wayfairSku: freshItem.wayfair_sku,
-                        fieldTypes:['quantity'], trigger:'sale_reversal'
-                    }});
-                }
-                if (syncRows.length > 0) {
-                    await sbClient.from('sync_queue').insert(syncRows);
-                }
-
-                // 6. Update local state
-                sale.status = 'reversed';
-                sale.reversed_at = new Date().toISOString();
-                const localItem = inventory.find(i => (i.sku || i.SKU) === sku);
-                if (localItem) { localItem.qty = qtyUpdates.qty; localItem.warehouseQty = qtyUpdates.qty; localItem.quantity = qtyUpdates.qty; }
-
-                // 7. Activity log
-                if (typeof logActivity === 'function') {
-                    logActivity('SALE_REVERSED', { sale_id: sale.id, sku, qty, channel, order_id: sale.order_id, new_qty: qtyUpdates.qty });
-                }
-
+                sale.status = 'reversed'; sale.reversed_at = new Date().toISOString();
                 renderSalesHistory();
-                renderInventoryList();
-                showToast(`Sale reversed: ${sku} x${qty} — qty restored`, 'success');
+                await refreshItem(row.id);
+                showResult(`Sale reversed: ${row.sku} x${qty} · ${queueOutcomeText(res)}`, (res.unknown || res.error) ? 'warning' : 'success');
             } catch (e) {
                 showToast('Reverse failed: ' + e.message, 'error');
             }
@@ -3037,48 +3030,41 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
         }
 
         async function reverseWriteoffMobile(woId, sku, qty) {
-            if (!confirm(`Reverse write-off?\n\nRestore ${qty} unit(s) of ${sku} back to warehouse?`)) return;
-            if (!sbClient || !sbConnected) { showToast('Not connected to database', 'error'); return; }
-
+            // v4.4.0 (S103): V2 reverseWriteoff (L9297) — restore what ACTUALLY left inventory
+            // (qty_deducted), resolve the item by id. The units go back to the warehouse shelf,
+            // not to a room. Like V2, the channel allocation is NOT restored (live-defects item 13).
+            if (!requireOnline()) return;
+            let restoreQty = pi(qty), itemId = null;
             try {
-                // 1. Get current item qty
-                const { data: itemData, error: itemErr } = await sbClient
-                    .from('items').select('id,qty').eq('sku', sku).limit(1).single();
-                if (itemErr || !itemData) throw new Error('Item not found: ' + sku);
-
-                const newQty = (parseInt(itemData.qty) || 0) + parseInt(qty);
-
-                // 2. Restore qty
-                const { error: qtyErr } = await sbClient.from('items').update({ qty: newQty }).eq('id', itemData.id);
+                const { data } = await sbClient.from('write_offs').select('qty_deducted,item_id,status').eq('id', woId).limit(1);
+                if (data && data.length) {
+                    if (data[0].status === 'reversed') { showToast('That write-off is already reversed — refresh the list.', 'error'); return; }
+                    if (data[0].qty_deducted !== null && data[0].qty_deducted !== undefined) restoreQty = pi(data[0].qty_deducted);
+                    itemId = data[0].item_id;
+                }
+            } catch (e) { console.warn('[reverseWriteoff] lookup failed; using requested quantity:', e.message); }
+            const note = restoreQty !== pi(qty) ? `\n\n⚠ ${qty} were written off but only ${restoreQty} left inventory, so ${restoreQty} will be restored.` : '';
+            if (!confirm(`Reverse write-off?\n\nRestore ${restoreQty} unit(s) of ${sku} to the warehouse?${note}`)) return;
+            try {
+                let row;
+                if (itemId) row = await fetchItemRow(itemId);
+                else {
+                    const { data } = await sbClient.from('items').select(ITEM_COLS).eq('sku', sku).limit(1);
+                    if (!data || !data.length) throw new Error('Item not found: ' + sku);
+                    row = data[0];
+                }
+                if (isComposite(row)) throw new Error(compositeRefusal(row.sku));
+                const newQty = pi(row.qty) + restoreQty;
+                const { error: qtyErr } = await sbClient.from('items').update({ qty: newQty }).eq('id', row.id);
                 if (qtyErr) throw new Error('Failed to restore qty: ' + qtyErr.message);
-
-                // 3. Mark write-off as reversed
-                const { error: woErr } = await sbClient.from('write_offs').update({
-                    status: 'reversed',
-                    reversed_at: new Date().toISOString()
-                }).eq('id', woId);
-                if (woErr) throw new Error('Failed to update write-off: ' + woErr.message);
-
-                // 4. Activity log
-                if (typeof logActivity === 'function') {
-                    logActivity('WRITEOFF_REVERSED', { sku, qty, woId, newQty });
-                }
-
-                // 5. Update local inventory cache
-                const localItem = inventory.find(i => (i.sku || i.SKU) === sku);
-                if (localItem) {
-                    localItem.qty = newQty;
-                    localItem.warehouseQty = newQty;
-                    localItem.quantity = newQty;
-                    renderInventoryList();
-                }
-
-                // 6. Refresh write-off list
+                const { error: woErr } = await sbClient.from('write_offs').update({ status: 'reversed', reversed_at: new Date().toISOString() }).eq('id', woId);
+                if (woErr) throw new Error('Qty WAS restored but the write-off was not marked reversed: ' + woErr.message);
+                logActivity('INVENTORY', 'WRITEOFF_REVERSED', null, `Write-off reversed: ${row.sku} x${restoreQty} restored to warehouse (${pi(row.qty)} → ${newQty})`, { write_off_id: woId, qty_restored: restoreQty, qty_requested: pi(qty) }, row.sku);
                 const rec = woCache.find(r => r.id === woId);
                 if (rec) { rec.status = 'reversed'; rec.reversed_at = new Date().toISOString(); }
                 renderWriteoffLog();
-
-                showToast(`Restored ${qty} unit(s) of ${sku}`, 'success');
+                await refreshItem(row.id);
+                showToast(`Restored ${restoreQty} unit(s) of ${row.sku}`, 'success');
             } catch (e) {
                 showToast('Reverse failed: ' + e.message, 'error');
             }
@@ -3087,6 +3073,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
         // ── Record Write-Off from Item Modal ──
         function openWriteoffFromItem() {
             if (!currentItem) return;
+            if (isComposite(currentItem)) { showToast(compositeRefusal(currentItem.sku), 'error'); return; }
             document.getElementById('woItemName').textContent = currentItem.productName || currentItem.product_name || currentItem.title || 'Unknown';
             document.getElementById('woItemSku').textContent = 'SKU: ' + (currentItem.sku || currentItem.SKU || '—');
             document.getElementById('woQty').value = 1;
@@ -3109,70 +3096,73 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
             document.getElementById('woLossDisplay').textContent = '$' + (landed * qty).toFixed(2);
         }
 
+        // v4.4.0 (S103): V2 recordWriteoff's contract (L8985) — qty_deducted recorded, the
+        // online channels capped and pushed — PLUS Paul's S103 decision D2: a write-off at
+        // location "Crazy Chicks" also takes the units off the Crazy Chicks number, because
+        // the lost units were in the room (L-4: room stock is INSIDE the warehouse number).
+        // One function serves the Write Off button AND the Crazy Chicks room audit's
+        // Missing/Partial, so the two can never disagree (REG S98-03).
+        // Returns { ok, message }. Never asks; the caller confirms first.
+        async function writeOffUnits(row, qty, reason, location, notes, reporter) {
+            const sku = row.sku;
+            if (isComposite(row)) return { ok: false, message: compositeRefusal(sku) };
+            const landed = pf(row.wholesale_price) * (1 + pf(row.ib_shipping) / 100 + pf(row.tariff) / 100) + pf(row.ob_shipping);
+            const qtyBefore = pi(row.qty);
+            const qtyDeducted = Math.min(qty, Math.max(0, qtyBefore));            // B-S92-03
+            const roomDeduct = location === ROOM_LABEL ? Math.min(qtyDeducted, pi(row.crazychicks_qty)) : 0;
+
+            const { data: woIns, error: woErr } = await sbClient.from('write_offs').insert({
+                item_id: row.id, sku, product_name: row.product_name || '',
+                quantity: qty, reason, location,
+                cost_per_unit: landed, total_loss: landed * qty,
+                reported_by: reporter || 'Mobile', notes: notes || '',
+                claim_filed: 'No', amount_recovered: 0,
+                qty_deducted: qtyDeducted
+            }).select('id');
+            if (woErr) return { ok: false, message: 'Write-off NOT recorded: ' + woErr.message };
+            const woId = (woIns && woIns.length) ? woIns[0].id : null;
+
+            const updates = { qty: Math.max(0, qtyBefore - qty) };
+            if (roomDeduct > 0) updates.crazychicks_qty = pi(row.crazychicks_qty) - roomDeduct;
+            capOnline(updates, row);
+            const { error: qtyErr } = await sbClient.from('items').update(updates).eq('id', row.id);
+            if (qtyErr) {
+                logActivity('INVENTORY', 'WRITE_OFF_STOCK_FAILED', null, `Write-off ${sku} x${qty} WAS recorded but stock was NOT deducted: ${qtyErr.message}`, { write_off_id: woId, updates }, sku);
+                return { ok: false, message: `⚠️ The write-off WAS recorded but the stock was NOT deducted (${qtyErr.message}). Tell Paul before retrying.` };
+            }
+            const after = await chqRead(row.id);
+            const res = await queueChannelQtyDeltas(row, after, 'write_off_cascade');
+            logActivity('INVENTORY', 'WRITE_OFF', null,
+                `Write-off: ${sku} x${qty} — ${reason} @ ${location} ($${(landed * qty).toFixed(2)}) (qty ${qtyBefore} → ${updates.qty}${roomDeduct ? `, ${ROOM_LABEL} ${pi(row.crazychicks_qty)} → ${updates.crazychicks_qty}` : ''})`,
+                { write_off_id: woId, qty_requested: qty, qty_deducted: qtyDeducted, qty_before: qtyBefore, qty_after: updates.qty, room_deducted: roomDeduct, location },
+                sku);
+            return { ok: true, res, message: `Write-off recorded: ${sku} ×${qty} · $${(landed * qty).toFixed(2)} · ${queueOutcomeText(res)}`, warn: !!(res.unknown || res.error || res.unpushable.length) };
+        }
+
         async function confirmWriteoff() {
-            if (!currentItem || !sbClient || !sbConnected) { showToast('Not connected', 'error'); return; }
-            const sku = currentItem.sku || currentItem.SKU;
-            const qty = parseInt(document.getElementById('woQty').value) || 1;
+            if (!currentItem) return;
+            if (!requireOnline()) return;
+            const qty = pi(document.getElementById('woQty').value) || 1;
             const reason = document.getElementById('woReason').value;
             const location = document.getElementById('woLocation').value;
             const notes = document.getElementById('woNotes').value;
-
-            const wholesale = parseFloat(currentItem.wholesalePrice || currentItem.wholesale_price || 0);
-            const ibPct = parseFloat(currentItem.ibShipping || currentItem.ib_shipping || 0) / 100;
-            const tariffPct = parseFloat(currentItem.tariff || 0) / 100;
-            const ob = parseFloat(currentItem.obShipping || currentItem.ob_shipping || 0);
-            const landed = wholesale * (1 + ibPct + tariffPct) + ob;
-
-            const currentQty = parseInt(currentItem.qty || currentItem.warehouseQty || currentItem.quantity || 0);
-            if (qty > currentQty) { showToast(`Only ${currentQty} in warehouse`, 'error'); return; }
-
-            if (!confirm(`Write off ${qty} unit(s) of ${sku}?\nReason: ${reason}\nLoss: $${(landed*qty).toFixed(2)}`)) return;
-
-            try {
-                // 1. Insert write-off record
-                const { error: woErr } = await sbClient.from('write_offs').insert({
-                    item_id: currentItem._sbId || currentItem.id,
-                    sku: sku,
-                    product_name: currentItem.productName || currentItem.product_name || currentItem.title || '',
-                    quantity: qty,
-                    reason: reason,
-                    location: location,
-                    cost_per_unit: landed,
-                    total_loss: landed * qty,
-                    reported_by: 'Mobile PWA',
-                    notes: notes,
-                    claim_filed: 'No',
-                    amount_recovered: 0
-                });
-                if (woErr) throw new Error('Write-off insert failed: ' + woErr.message);
-
-                // 2. Deduct qty
-                const newQty = Math.max(0, currentQty - qty);
-                const { error: qtyErr } = await sbClient.from('items')
-                    .update({ qty: newQty })
-                    .eq('id', currentItem._sbId || currentItem.id);
-                if (qtyErr) throw new Error('Qty deduction failed: ' + qtyErr.message);
-
-                // 3. Update local state
-                currentItem.qty = newQty;
-                currentItem.warehouseQty = newQty;
-                currentItem.quantity = newQty;
-                if (document.getElementById('editQty')) document.getElementById('editQty').value = newQty;
-
-                const localItem = inventory.find(i => (i.sku || i.SKU) === sku);
-                if (localItem) { localItem.qty = newQty; localItem.warehouseQty = newQty; localItem.quantity = newQty; }
-
-                // 4. Log
-                if (typeof logActivity === 'function') {
-                    logActivity('WRITEOFF_RECORDED', { sku, qty, reason, location, loss: landed * qty, newQty });
-                }
-
-                closeWoRecord();
-                renderInventoryList();
-                showToast(`Write-off recorded: ${sku} ×${qty}`, 'success');
-            } catch (e) {
-                showToast('Write-off failed: ' + e.message, 'error');
-            }
+            let row;
+            try { row = await fetchItemRow(currentItem.id); }
+            catch (e) { showToast(e.message + ' — nothing was recorded.', 'error'); return; }
+            if (isComposite(row)) { showToast(compositeRefusal(row.sku), 'error'); return; }
+            const landed = pf(row.wholesale_price) * (1 + pf(row.ib_shipping) / 100 + pf(row.tariff) / 100) + pf(row.ob_shipping);
+            const onHand = pi(row.qty), moved = Math.min(qty, Math.max(0, onHand));
+            const roomMoved = location === ROOM_LABEL ? Math.min(moved, pi(row.crazychicks_qty)) : 0;
+            let msg = `Write off ${qty} × ${row.sku}?\nReason: ${reason}\nLocation: ${location}\nLoss: $${(landed * qty).toFixed(2)}\n\nwarehouse ${onHand}→${Math.max(0, onHand - qty)}`;
+            if (roomMoved) msg += `\n${ROOM_LABEL} ${pi(row.crazychicks_qty)}→${pi(row.crazychicks_qty) - roomMoved}`;
+            if (moved < qty) msg += `\n\n⚠ Only ${onHand} on hand — ${moved} unit(s) will leave inventory; the full loss is still recorded.`;
+            if (!confirm(msg)) return;
+            const out = await writeOffUnits(row, qty, reason, location, notes, 'Mobile');
+            if (!out.ok) { showResult(out.message, 'error'); return; }
+            closeWoRecord();
+            closeItemModal();
+            await refreshItem(row.id);
+            showResult(out.message, out.warn ? 'warning' : 'success');
         }
 
         // ============================================================================
@@ -3181,9 +3171,8 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
 
         async function initApp() {
             // NOTE: loadLogFromStorage() intentionally removed — activityLog[] retired in v4.0
-            loadOfflineQueue();
             updateSortUI();
-            logActivity('APP_INIT', { version: '4.2-Supabase' });
+            logEvent('APP_INIT', { version: TOOL_VERSION });
 
             // Auto-connect if credentials are stored
             const creds = getSbCredentials();
@@ -3202,7 +3191,6 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
 
         document.addEventListener('DOMContentLoaded', function() {
             // NOTE: loadLogFromStorage() intentionally removed — retired in v4.0
-            loadOfflineQueue();
             updateSortUI();
 
             const auth  = localStorage.getItem('ccd_mobile_auth');
@@ -3234,7 +3222,7 @@ v4.0: Full rebuild — localStorage shadow copies retired, financial calculation
         });
 
         // Handle online/offline events
-        window.addEventListener('online',  () => { isConnected = sbConnected; updateOfflineBanner(); if (sbConnected && offlineQueue.length > 0) setTimeout(syncOfflineQueue, 1000); });
+        window.addEventListener('online',  () => { isConnected = sbConnected; updateOfflineBanner(); });
         window.addEventListener('offline', () => { updateOfflineBanner(); });
 
         // Register Service Worker
