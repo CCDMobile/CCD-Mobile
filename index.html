@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
 ================================================================================
-CCD MOBILE INVENTORY MODULE v4.4.1-Supabase
+CCD MOBILE INVENTORY MODULE v4.4.2-Supabase
 ================================================================================
 Pure display terminal backed by Supabase. Desktop CCD-INVENTORY-SYSTEM.html
 is the ONLY calculation engine. Mobile reads stored values — never calculates
@@ -17,6 +17,11 @@ v4.4.0 (S103): joins Inventory V2's write contract — sales through
 v4.4.1 (S103, Paul): everyday functions on a quick-action bar under the header;
       Settings holds only the connection, opens only after the PIN, and
       Disconnect asks first (it removes the saved key from this phone).
+v4.4.2 (S103, Paul): channel prices are editable on the item (Etsy, Wix,
+      Wayfair, Crazy Chicks). Save stores them; a separate, confirmed
+      "Push prices" sends Etsy/Wix prices to the live listings (price only,
+      stamped 'v2', edge-processed). The dead "Location" line is removed.
+      Build notes: claude\CCD-S103-Build-Notes-Mobile-v4_4_2.md
 ================================================================================
 -->
 <html lang="en">
@@ -347,6 +352,9 @@ v4.4.1 (S103, Paul): everyday functions on a quick-action bar under the header;
         .result-bar button { margin-left: auto; background: none; border: none; font-size: 18px; color: inherit; cursor: pointer; }
         .role-lock { display: none; margin-bottom: 12px; padding: 10px; border-radius: 8px; background: #EEF2FF; color: #3730A3; font-size: 13px; }
         .tm-closed { display: none; font-size: 12px; color: #6B7280; margin-top: 6px; }
+        .price-note { font-size: 12px; color: #6B7280; margin-top: 6px; line-height: 1.35; }
+        .push-price-btn { margin-top: 10px; width: 100%; padding: 11px; border: none; border-radius: 8px; background: #0F766E; color: white; font-size: 14px; font-weight: 600; cursor: pointer; }
+        .push-price-btn:disabled { background: #CBD5E1; color: #64748B; cursor: not-allowed; }
         .badge-other      { background: var(--bg); color: var(--text-light); }
 
         /* ── FINANCIAL DISPLAY PANEL ── */
@@ -541,6 +549,18 @@ v4.4.1 (S103, Paul): everyday functions on a quick-action bar under the header;
                     <div class="total-qty-display"><div style="font-size: 13px;">Available online: <span id="totalQtyDisplay" style="font-weight: 600;">0</span></div></div>
                     <div class="tm-closed" id="tmClosedNote"></div>
                 </div>
+                <!-- v4.4.2 (Paul, S103): channel prices, editable as on V2's card -->
+                <div class="form-group" id="priceGroup">
+                    <label class="form-label">Channel Prices ($)</label>
+                    <div class="channel-inputs">
+                        <div class="channel-input-group"><label class="channel-input-label">Etsy</label><input type="number" class="channel-input" id="editPriceEtsy" min="0" step="0.01" inputmode="decimal" placeholder="—"></div>
+                        <div class="channel-input-group"><label class="channel-input-label">Wix</label><input type="number" class="channel-input" id="editPriceWix" min="0" step="0.01" inputmode="decimal" placeholder="—"></div>
+                        <div class="channel-input-group"><label class="channel-input-label">Wayfair</label><input type="number" class="channel-input" id="editPriceWayfair" min="0" step="0.01" inputmode="decimal" placeholder="—"></div>
+                        <div class="channel-input-group"><label class="channel-input-label">Crazy Chicks</label><input type="number" class="channel-input" id="editPriceCrazyChicks" min="0" step="0.01" inputmode="decimal" placeholder="—"></div>
+                    </div>
+                    <div class="price-note">Save Changes stores the prices. The Etsy and Wix listings change only when you tap Push prices. Wayfair's price is set in Partner Home; the Crazy Chicks price is on the tag.</div>
+                    <button type="button" class="push-price-btn" id="pushPriceBtn" onclick="pushPricesToChannels()">💲 Push prices to Etsy &amp; Wix</button>
+                </div>
                 <div class="form-group"><label class="form-label">Comments</label><input type="text" class="form-input" id="editComments" placeholder="Add notes about this item..."></div>
 
                 <!-- Stored Financial Data (read-only, written by desktop) -->
@@ -612,7 +632,7 @@ v4.4.1 (S103, Paul): everyday functions on a quick-action bar under the header;
                 </div>
                 <div class="settings-section">
                     <div class="settings-section-title">Version</div>
-                    <div class="settings-item"><div class="settings-item-label">App Version</div><div class="settings-item-value">v4.4.1 Supabase</div></div>
+                    <div class="settings-item"><div class="settings-item-label">App Version</div><div class="settings-item-value">v4.4.2 Supabase</div></div>
                 </div>
             </div>
         </div>
@@ -884,7 +904,7 @@ v4.4.1 (S103, Paul): everyday functions on a quick-action bar under the header;
 
     <script>
         // ============================================================================
-        // CCD MOBILE v4.4.1 — SUPABASE EDITION (TOOL_VERSION below)
+        // CCD MOBILE v4.4.2 — SUPABASE EDITION (TOOL_VERSION below)
         // Pure display terminal. Desktop is the calculation engine.
         // Mobile reads stored values. Mobile never calculates prices.
         // ============================================================================
@@ -907,7 +927,7 @@ v4.4.1 (S103, Paul): everyday functions on a quick-action bar under the header;
         // Crazy Chicks is a ROOM (Paul, S103). On screen it is "Crazy Chicks" or
         // "Chicks" — never "CC" (L-5).
         // ============================================================================
-        const TOOL_VERSION = '4.4.1';
+        const TOOL_VERSION = '4.4.2';
         const DEVICE_LABEL = 'Mobile-v' + TOOL_VERSION;
         const ROOM = 'crazychicks';
         const ROOM_LABEL = 'Crazy Chicks';
@@ -915,7 +935,17 @@ v4.4.1 (S103, Paul): everyday functions on a quick-action bar under the header;
         const ONLINE_CHANNELS = ['etsy', 'wix', 'wayfair'];
         const CH_QTY_COL = { etsy: 'etsy_qty', wix: 'wix_qty', wayfair: 'wayfair_qty', treasuremarts: 'treasuremarts_qty', crazychicks: 'crazychicks_qty' };
         const CH_LABEL = { etsy: 'Etsy', wix: 'Wix', wayfair: 'Wayfair', treasuremarts: 'TreasureMarts', crazychicks: ROOM_LABEL };
-        const ITEM_COLS = 'id,sku,product_name,brand_name,comments,item_role,is_bundle,is_active,qty,etsy_qty,wix_qty,wayfair_qty,treasuremarts_qty,crazychicks_qty,etsy_listing_id,etsy_variant_id,wix_product_id,wix_variant_id,wayfair_sku,wholesale_price,ib_shipping,tariff,ob_shipping';
+        const ITEM_COLS = 'id,sku,product_name,brand_name,comments,item_role,is_bundle,is_active,qty,etsy_qty,wix_qty,wayfair_qty,treasuremarts_qty,crazychicks_qty,etsy_listing_id,etsy_variant_id,wix_product_id,wix_variant_id,wayfair_sku,wholesale_price,ib_shipping,tariff,ob_shipping,etsy_price,wix_price,wayfair_price,crazychicks_price';
+        // v4.4.2: the editable channel prices. push = the Etsy/Wix listing price can be sent
+        // (edge buildPricePayload: Etsy updateListing, Wix updateProduct; Wayfair not supported).
+        const PRICE_FIELDS = [
+            { key: 'etsy',        col: 'etsy_price',        input: 'editPriceEtsy',        label: 'Etsy',         push: true,  variantCol: 'etsy_variant_id' },
+            { key: 'wix',         col: 'wix_price',         input: 'editPriceWix',         label: 'Wix',          push: true,  variantCol: 'wix_variant_id' },
+            { key: 'wayfair',     col: 'wayfair_price',     input: 'editPriceWayfair',     label: 'Wayfair',      push: false },
+            { key: 'crazychicks', col: 'crazychicks_price', input: 'editPriceCrazyChicks', label: 'Crazy Chicks', push: false },
+        ];
+        const money = v => Math.round(parseFloat(v) * 100) / 100;
+        const storedPrice = (row, col) => (row && row[col] != null && parseFloat(row[col]) > 0) ? money(row[col]) : null;
 
         function pi(v) { return parseInt(v) || 0; }
         function pf(v) { return parseFloat(v) || 0; }
@@ -1475,7 +1505,6 @@ async function registerToolVersion(client, toolKey, toolVersion) {
                 category:    row.category     || '',
                 vendor:      row.vendor       || '',
                 shelfNumber:   row.shelf_number   || '',
-                shelfLocation: row.shelf_location || '',
                 comments:    row.comments     || '',
                 isActive:    row.is_active !== false,
                 isBundle:    row.is_bundle === true,  // v4.3 — needed for ECOSYSTEM-011 bundle skip
@@ -1554,7 +1583,8 @@ async function registerToolVersion(client, toolKey, toolVersion) {
         // itemToSbRow — minimal write-back (spec Section 8.2)
         // Mobile only writes fields it actually controls.
         // wholesalePrice, retailPrice, SKU — locked read-only in UI, not written here.
-        // Financial columns (prices, profit, margin) — NEVER written by mobile.
+        // Profit / margin / cost — NEVER written by mobile. Channel PRICES are written by
+        // saveItem since v4.4.2 (Paul, S103), as V2's card does; not by this function.
         function itemToSbRow(item) {
             return {
                 sku:              item.sku,
@@ -1696,7 +1726,6 @@ async function registerToolVersion(client, toolKey, toolVersion) {
                     <div class="item-details">
                         <div class="detail-item"><span class="detail-label">Retail:</span><span class="detail-value">${retailDisplay}</span></div>
                         <div class="detail-item"><span class="detail-label">Shelf #:</span><span class="detail-value">${item.shelfNumber || 'N/A'}</span></div>
-                        <div class="detail-item"><span class="detail-label">Location:</span><span class="detail-value">${item.shelfLocation || 'N/A'}</span></div>
                     </div>
                     <div class="item-channels">
                         <div class="channel-row"><span class="channel-label">Etsy:</span><span class="channel-qty">${ch.etsy || 0}</span><span class="${priceClass(ep)}">${fmtPrice(ep)}</span></div>
@@ -1744,6 +1773,10 @@ async function registerToolVersion(client, toolKey, toolVersion) {
             document.getElementById('editWix').value           = ch.wix           || 0;
             document.getElementById('editWayfair').value       = ch.wayfair       || 0;
             document.getElementById('editCrazyChicks').value   = ch.crazychicks   || 0;
+            for (const p of PRICE_FIELDS) {
+                const v = currentItem.channelPrices ? currentItem.channelPrices[p.key] : null;
+                document.getElementById(p.input).value = (v != null && v > 0) ? parseFloat(v).toFixed(2) : '';
+            }
             const tmNote = document.getElementById('tmClosedNote');
             tmNote.style.display = (ch.treasuremarts || 0) > 0 ? 'block' : 'none';
             tmNote.textContent = `TreasureMarts (closed): ${ch.treasuremarts || 0} — wind this down in Inventory V2.`;
@@ -1752,7 +1785,7 @@ async function registerToolVersion(client, toolKey, toolVersion) {
             const lock = document.getElementById('roleLock');
             lock.style.display = locked ? 'block' : 'none';
             lock.textContent = locked ? `🧩 This is a ${currentItem.itemRole === 'set' ? 'Set' : 'bundle'}. Its stock comes from its pieces — sell, adjust or write it off in Inventory V2. You can still edit the name, brand and comments here.` : '';
-            ['editQty','editEtsy','editWix','editWayfair','editCrazyChicks'].forEach(id => { document.getElementById(id).disabled = locked; });
+            ['editQty','editEtsy','editWix','editWayfair','editCrazyChicks','pushPriceBtn'].concat(PRICE_FIELDS.map(p => p.input)).forEach(id => { document.getElementById(id).disabled = locked; });
             updateTotalQty();
 
             // Populate financial display panel
@@ -1837,6 +1870,7 @@ async function registerToolVersion(client, toolKey, toolVersion) {
                 comments:     document.getElementById('editComments').value.trim(),
             };
             const updates = {};
+            const priceMoves = [];
             if (text.product_name !== (before.product_name || '')) updates.product_name = text.product_name;
             if (text.brand_name   !== (before.brand_name   || '')) updates.brand_name   = text.brand_name;
             if (text.comments     !== (before.comments     || '')) updates.comments     = text.comments;
@@ -1876,6 +1910,20 @@ async function registerToolVersion(client, toolKey, toolVersion) {
                     }
                 }
                 for (const [col, v] of Object.entries(want)) if (v !== pi(before[col])) updates[col] = v;
+                // v4.4.2 (Paul, S103): channel prices, as V2's card writes them. A blank box leaves the
+                // stored price alone — it never writes null or 0 over a price.
+                for (const p of PRICE_FIELDS) {
+                    const raw = document.getElementById(p.input).value.trim();
+                    if (raw === '') continue;
+                    const v = money(raw);
+                    if (!Number.isFinite(v) || v <= 0) { showResult(`Not saved: the ${p.label} price must be more than $0.`, 'error'); return; }
+                    const old = storedPrice(before, p.col);
+                    if (old === v) continue;
+                    updates[p.col] = v;
+                    priceMoves.push({ p, old, v });
+                }
+                const big = priceMoves.filter(m => m.old && (m.v > m.old * 2 || m.v < m.old / 2));
+                if (big.length && !confirm(`Big price change — check for a typo:\n${big.map(m => `${m.p.label} $${m.old.toFixed(2)} → $${m.v.toFixed(2)}`).join('\n')}\n\nSave anyway?`)) return;
             }
 
             if (Object.keys(updates).length === 0) { closeItemModal(); showToast('No changes to save', 'success'); return; }
@@ -1888,10 +1936,62 @@ async function registerToolVersion(client, toolKey, toolVersion) {
             const after = await chqRead(item.id);
             const res = await queueChannelQtyDeltas(before, after, 'mobile_save');
             logActivity('INVENTORY', 'ITEM_SAVED', null, `Saved ${sku} on the phone: ${Object.keys(updates).join(', ')}`, { changes: updates }, sku);
+            const priceText = priceMoves.map(m => `${m.p.label} ${m.old != null ? '$' + m.old.toFixed(2) : '—'} → $${m.v.toFixed(2)}`).join(', ');
+            if (priceMoves.length) logActivity('INVENTORY', 'PRICE_CHANGED', null, `Price changed on ${sku} on the phone: ${priceText}`,
+                { changes: Object.fromEntries(priceMoves.map(m => [m.p.col, { before: m.old, after: m.v }])) }, sku);
+            // An Etsy/Wix price that moved on a linked listing is not live until it is pushed.
+            const livePending = priceMoves.filter(m => m.p.push && before[m.p.key === 'etsy' ? 'etsy_listing_id' : 'wix_product_id']);
             closeItemModal();
             await refreshItem(item.id);
             const bad = res.unknown || res.error || res.unpushable.length;
-            showResult(`Saved ${sku}` + (capNote.length ? ` · capped to available online: ${capNote.join(', ')}` : '') + ` · ${queueOutcomeText(res)}`, bad ? 'warning' : 'success');
+            showResult(`Saved ${sku}` + (capNote.length ? ` · capped to available online: ${capNote.join(', ')}` : '') + ` · ${queueOutcomeText(res)}`
+                + (priceMoves.length ? ` · price ${priceText}` : '')
+                + (livePending.length ? ` · ${livePending.map(m => m.p.label).join(' & ')} listing NOT updated yet — tap 💲 Push prices` : ''), bad ? 'warning' : 'success');
+            if (livePending.length) { openItemModal(item.id); showToast('Saved — tap 💲 Push prices to update ' + livePending.map(m => m.p.label).join(' & '), 'success'); }
+        }
+
+        // v4.4.2 (Paul, S103): "Save + a separate push". Sends the SAVED Etsy/Wix price of this item
+        // to the live listing — price only (fieldTypes ['price']), stamped 'v2', so the edge
+        // processor takes it (buildPricePayload: Etsy updateListing, Wix updateProduct).
+        // Refuses: unsaved price edits (it would push the old price), no listing, no price, and
+        // one option of a multi-option listing (a listing-level price would reprice every option).
+        async function pushPricesToChannels() {
+            if (!currentItem) return;
+            if (!requireOnline()) return;
+            if (isComposite(currentItem)) { showToast(compositeRefusal(currentItem.sku), 'error'); return; }
+            let row;
+            try { row = await fetchItemRow(currentItem.id); }
+            catch (e) { showResult('⚠️ ' + e.message + ' — nothing was pushed.', 'error'); return; }
+            for (const p of PRICE_FIELDS) {
+                const raw = document.getElementById(p.input).value.trim();
+                if (raw !== '' && money(raw) !== storedPrice(row, p.col)) { showToast('Save the price change first, then push', 'error'); return; }
+            }
+            const rows = [], plan = [], skipped = [];
+            for (const p of PRICE_FIELDS.filter(x => x.push)) {
+                const ch = CHQ_PUSHABLE.find(c => c.key === p.key);
+                const price = storedPrice(row, p.col);
+                if (!chqHasId(ch, row)) { skipped.push(`${p.label}: no listing linked`); continue; }
+                if (price == null) { skipped.push(`${p.label}: no price stored`); continue; }
+                if (row[p.variantCol]) { skipped.push(`${p.label}: this is one option of a multi-option listing — change its price in ${p.label} or V2`); continue; }
+                const r = chqRowFor(ch, row, 0, 'mobile_price_push');
+                delete r.fields.quantity;
+                r.fields.fieldTypes = ['price'];
+                r.fields.price = price;
+                rows.push(r); plan.push(`${p.label} $${price.toFixed(2)}`);
+            }
+            if (!rows.length) { showResult(`Nothing pushed for ${row.sku} — ` + (skipped.join(' · ') || 'no Etsy or Wix price to push'), 'warning'); return; }
+            if (!confirm(`Push the price to the live listing?\n\n${row.sku}\n${plan.join('\n')}` + (skipped.length ? `\n\nNot pushed:\n${skipped.join('\n')}` : '') + `\n\nCustomers see the new price within a few minutes.`)) return;
+            let err = null;
+            try { const { error } = await sbClient.from('sync_queue').insert(sqStamp(rows)); if (error) err = error.message; }
+            catch (e) { err = e.message; }
+            if (err) {
+                logActivity('INVENTORY', 'PRICE_PUSH_FAILED', null, `Price push NOT queued on ${row.sku}: ${err}`, { planned: plan, trigger: 'mobile_price_push' }, row.sku);
+                showResult(`⚠️ Price push NOT queued for ${row.sku} (${err}) — the listings were not changed.`, 'error');
+                return;
+            }
+            logActivity('INVENTORY', 'PRICE_PUSH', null, `Price push queued on ${row.sku} from the phone: ${plan.join(', ')}` + (skipped.length ? ` · not pushed: ${skipped.join('; ')}` : ''),
+                { queued: plan, skipped: skipped, trigger: 'mobile_price_push' }, row.sku);
+            showResult(`💲 Price queued for ${row.sku}: ${plan.join(', ')}` + (skipped.length ? ` · not pushed: ${skipped.join(' · ')}` : ''), skipped.length ? 'warning' : 'success');
         }
 
         // ============================================================================
