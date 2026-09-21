@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
 ================================================================================
-CCD MOBILE INVENTORY MODULE v4.5.0-Supabase
+CCD MOBILE INVENTORY MODULE v4.5.1-Supabase
 ================================================================================
 Pure display terminal backed by Supabase. Desktop CCD-INVENTORY-SYSTEM.html
 is the ONLY calculation engine. Mobile reads stored values — never calculates
@@ -28,6 +28,12 @@ v4.5.0 (S104, Paul): the Crazy Chicks TAG SCANNER. A red aiming line — only th
       on the spot; a scan audit lists found / not scanned / not on record and
       fills the room checklist (nothing is written off). Tags: crazychicks_tags.
       Build notes: claude\CCD-S104-Build-Notes-Mobile-v4_5_0.md
+v4.5.1 (S104, Paul): a tag is a LABEL, not a unit. An unlinked tag's printed
+      SKU is read from the picture and offered for a one-tap confirm; "Put 1 in
+      the room" only when the room is 0. The scan audit counts per item — room
+      count vs stickers scanned — lists what was not found, and can set the room
+      up to what was scanned. Nothing is written off by the scan.
+      Build notes: claude\CCD-S104-Build-Notes-Mobile-v4_5_1.md
 ================================================================================
 -->
 <html lang="en">
@@ -674,7 +680,7 @@ v4.5.0 (S104, Paul): the Crazy Chicks TAG SCANNER. A red aiming line — only th
                 </div>
                 <div class="settings-section">
                     <div class="settings-section-title">Version</div>
-                    <div class="settings-item"><div class="settings-item-label">App Version</div><div class="settings-item-value">v4.5.0 Supabase</div></div>
+                    <div class="settings-item"><div class="settings-item-label">App Version</div><div class="settings-item-value">v4.5.1 Supabase</div></div>
                 </div>
             </div>
         </div>
@@ -960,7 +966,7 @@ v4.5.0 (S104, Paul): the Crazy Chicks TAG SCANNER. A red aiming line — only th
 
     <script>
         // ============================================================================
-        // CCD MOBILE v4.5.0 — SUPABASE EDITION (TOOL_VERSION below)
+        // CCD MOBILE v4.5.1 — SUPABASE EDITION (TOOL_VERSION below)
         // Pure display terminal. Desktop is the calculation engine.
         // Mobile reads stored values. Mobile never calculates prices.
         // ============================================================================
@@ -983,7 +989,7 @@ v4.5.0 (S104, Paul): the Crazy Chicks TAG SCANNER. A red aiming line — only th
         // Crazy Chicks is a ROOM (Paul, S103). On screen it is "Crazy Chicks" or
         // "Chicks" — never "CC" (L-5).
         // ============================================================================
-        const TOOL_VERSION = '4.5.0';
+        const TOOL_VERSION = '4.5.1';
         const DEVICE_LABEL = 'Mobile-v' + TOOL_VERSION;
         const ROOM = 'crazychicks';
         const ROOM_LABEL = 'Crazy Chicks';
@@ -3368,22 +3374,100 @@ async function registerToolVersion(client, toolKey, toolVersion) {
         // (S104 CT-01..03), filled by V2's weekly tag import or linked here at first scan.
         //   · RED AIMING LINE (Paul, S104): only a band around the line is decoded, so a
         //     barcode elsewhere in the picture is ignored; a code must read the same twice.
-        //   · Unknown tag → link it to the SKU printed on it (Paul, S104). Linking never
-        //     changes stock; "Add 1 to the room" is a separate, confirmed step.
+        //   · Unknown tag → the SKU PRINTED on the tag is read from the picture and offered
+        //     for a one-tap confirm (v4.5.1, Paul); else search by SKU or product name.
+        //     Linking never changes stock; "Put 1 in the room" (room 0 → 1 only) is separate.
+        //   · A TAG IS A LABEL, NOT A UNIT (v4.5.1, Paul): spare tags exist; room counts are
+        //     changed by hand, or from the scan audit's per-item count.
         //   · Scan to sell: the §3 sale at the TAG price, and that tag is marked sold.
-        //   · Scan audit: found / expected-but-not-scanned / not-on-record / replaced-or-sold
-        //     tags still on the shelf. It fills the room checklist; it NEVER writes stock off
-        //     (M-10, option A). No writes offline (M-2). Sets/bundles refused (M-1).
+        //   · Scan audit, PER ITEM: room count vs stickers scanned → "not found" (to look for,
+        //     or write off later from Audit History), "more scanned" (set the room up), tags
+        //     to link, replaced/sold tags on the shelf. It fills the room checklist; it NEVER
+        //     writes stock off (M-10, option A). No writes offline (M-2). Sets/bundles refused (M-1).
         // ============================================================================
         const SCAN_ZXING_URL = 'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js';
         const SCAN_BAND = { left: 0.08, width: 0.84, height: 0.14 };   // matches .scan-line / .scan-band
-        const scan = { mode: 'find', stream: null, timer: null, reader: null, canvas: null, last: null, lastAt: 0, paused: false, busy: false, current: null, audit: null };
+        const scan = { mode: 'find', stream: null, timer: null, reader: null, canvas: null, last: null, lastAt: 0, paused: false, busy: false, current: null, audit: null, frames: new Map(), ocr: null };
         let pendingSaleTag = null;   // set only by scanSell(); honoured by confirmSale() for ONE Crazy Chicks unit
 
         function scanEsc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
         function scanPanel(html) { document.getElementById('scanPanel').innerHTML = html; }
         function scanHint(text) { document.getElementById('scanHint').textContent = text; }
         function scanItem(id) { return inventory.find(i => String(i.id) === String(id)) || null; }
+
+        // v4.5.1 (Paul, S104 09-21): an unlinked tag's printed SKU is READ from the camera picture and
+        // offered for confirmation. tesseract.js loads (about 7 MB, once, then cached by the phone) only the
+        // first time an unlinked tag is scanned. Only a word that EXACTLY matches one of our SKUs — both
+        // compared as uppercase letters and digits — is offered; anything else falls back to the search.
+        const SCAN_OCR = {
+            lib: 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js',
+            workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/worker.min.js',
+            corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@5.1.1',
+            langPath: 'https://cdn.jsdelivr.net/npm/@tesseract.js-data/eng@1.0.0/4.0.0_best_int'
+        };
+        const scanNorm = s => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+        function scanGrabFrame() {   // the whole visible picture, at most 1280 px wide
+            const v = document.getElementById('scanVideo');
+            if (!v || !v.videoWidth || v.readyState < 2) return null;
+            const k = Math.min(1, 1280 / v.videoWidth), c = document.createElement('canvas');
+            c.width = Math.round(v.videoWidth * k); c.height = Math.round(v.videoHeight * k);
+            c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+            return c;
+        }
+
+        function scanLoadScript(src) {
+            return new Promise((ok, no) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = () => no(new Error('could not load ' + src)); document.head.appendChild(s); });
+        }
+
+        async function scanOcrWorker() {
+            if (scan.ocr) return scan.ocr;
+            if (!window.Tesseract) await scanLoadScript(SCAN_OCR.lib);
+            scan.ocr = Tesseract.createWorker('eng', 1, { workerPath: SCAN_OCR.workerPath, corePath: SCAN_OCR.corePath, langPath: SCAN_OCR.langPath, gzip: true })
+                .then(async w => { await w.setParameters({ tessedit_pageseg_mode: '11' }); return w; })
+                .catch(e => { scan.ocr = null; throw e; });
+            return scan.ocr;
+        }
+
+        // Returns { items: [inventory items whose SKU is printed on the tag], price: number|null }.
+        async function scanReadTag(canvas) {
+            const w = await scanOcrWorker();
+            const { data } = await w.recognize(canvas);
+            const bySku = new Map();
+            for (const i of inventory) { if (isComposite(i)) continue; const n = scanNorm(i.sku); if (n.length < 4) continue; if (!bySku.has(n)) bySku.set(n, []); bySku.get(n).push(i); }
+            const found = new Map();
+            for (const line of (data.lines || [])) {
+                const words = (line.words || []).map(x => x.text);
+                for (let a = 0; a < words.length; a++) for (let b = a; b < Math.min(words.length, a + 4); b++) {   // SKUs with spaces span words
+                    const hits = bySku.get(scanNorm(words.slice(a, b + 1).join('')));
+                    if (hits) hits.forEach(i => found.set(String(i.id), i));
+                }
+            }
+            const m = /\$\s?(\d{1,4}\.\d{2})/.exec(data.text || '') || /(?:^|\s)(\d{1,4}\.\d{2})(?:\s|$)/.exec(data.text || '');
+            return { items: [...found.values()], price: m ? parseFloat(m[1]) : null };
+        }
+
+        async function scanAutoLink(tagNo) {
+            const box = document.getElementById('scanAuto'), frame = scan.frames && scan.frames.get(tagNo);
+            if (!box) return;
+            if (!frame) { box.innerHTML = ''; return; }
+            box.innerHTML = '<div class="scan-note">📖 Reading the SKU printed on the tag…</div>';
+            let r;
+            try { r = await scanReadTag(frame); }
+            catch (e) { if (document.getElementById('scanAuto')) document.getElementById('scanAuto').innerHTML = `<div class="scan-note">Could not read the tag (${scanEsc(e.message)}) — type the SKU or product name.</div>`; return; }
+            if (!scan.current || scan.current.tag_no !== tagNo || !document.getElementById('scanAuto')) return;   // moved on meanwhile
+            scan.current.ocrPrice = r.price;
+            if (r.items.length === 1) {
+                document.getElementById('scanAuto').innerHTML = `<div class="scan-msg">📖 The tag says <b>${scanEsc(r.items[0].sku)}</b>${r.price != null ? ' at <b>$' + r.price.toFixed(2) + '</b>' : ''} — check it and tap Link.</div>`;
+                scanLinkChoose(String(r.items[0].id), r.price);
+            } else if (r.items.length > 1) {
+                document.getElementById('scanAuto').innerHTML = `<div class="scan-msg">📖 The tag could be any of these — pick the right one:</div>` +
+                    r.items.map(i => `<button class="scan-hit" onclick="scanLinkChoose('${scanEsc(i.id)}', ${r.price != null ? r.price : 'null'})"><b>${scanEsc(i.sku)}</b> · ${scanEsc(i.productName || '')}<span>room ${i.channels?.crazychicks || 0}</span></button>`).join('');
+            } else {
+                document.getElementById('scanAuto').innerHTML = `<div class="scan-note">📖 Couldn't read a SKU on the tag — type the SKU or product name.</div>`;
+            }
+        }
+
 
         function scanLoadZXing() {
             if (window.ZXing) return Promise.resolve();
@@ -3434,6 +3518,8 @@ async function registerToolVersion(client, toolKey, toolVersion) {
 
         function closeScanner() {
             scanStopCamera();
+            if (scan.ocr) { scan.ocr.then(w => w.terminate()).catch(() => {}); scan.ocr = null; }
+            scan.frames = new Map();
             document.getElementById('scanModal').classList.remove('active');
             if (document.getElementById('treasureMartModal')?.classList.contains('active')) renderTMList();
         }
@@ -3468,6 +3554,8 @@ async function registerToolVersion(client, toolKey, toolVersion) {
 
         function scanAccept(tagNo) {
             if (navigator.vibrate) { try { navigator.vibrate(60); } catch (e) {} }
+            const f = scanGrabFrame();   // v4.5.1: kept so an unlinked tag's printed SKU can be read
+            if (f) { scan.frames.set(tagNo, f); if (scan.frames.size > 40) scan.frames.delete(scan.frames.keys().next().value); }
             window.SCAN_LOG = (window.SCAN_LOG || []).concat([tagNo]);
             if (scan.mode === 'audit') { scanAuditAdd(tagNo); return; }
             scan.paused = true;
@@ -3538,11 +3626,12 @@ async function registerToolVersion(client, toolKey, toolVersion) {
 
         function scanShowUnknown(tagNo) {
             scan.current = { tag_no: tagNo, unknown: true, pick: null };
-            scanPanel(`<div class="scan-msg">Tag <b>${scanEsc(tagNo)}</b> isn't on record yet. Link it to the item — type the SKU printed on the tag.</div>
+            scanPanel(`<div class="scan-msg">Tag <b>${scanEsc(tagNo)}</b> isn't linked yet. Link it to the item on the tag.</div>
+                <div id="scanAuto"></div>
                 <input id="scanLinkSearch" class="scan-input" placeholder="SKU or product name" oninput="scanLinkFilter()" autocomplete="off" autocapitalize="characters">
                 <div id="scanLinkList"></div><div id="scanLinkPick"></div>
                 <div class="scan-btns"><button class="scan-btn2" onclick="scanNext()">Cancel · scan next</button></div>`);
-            setTimeout(() => { const el = document.getElementById('scanLinkSearch'); if (el) el.focus(); }, 50);
+            scanAutoLink(tagNo);   // v4.5.1: read the printed SKU; the search stays available meanwhile
         }
 
         function scanLinkFilter() {
@@ -3557,10 +3646,10 @@ async function registerToolVersion(client, toolKey, toolVersion) {
                 : '<div class="scan-note">No item matches. Sets and bundles are never in the room.</div>';
         }
 
-        function scanLinkChoose(id) {
+        function scanLinkChoose(id, tagPrice) {
             const it = scanItem(id); if (!it || !scan.current) return;
             scan.current.pick = it;
-            const p = getChannelPrice(it, ROOM);
+            const p = (tagPrice != null && tagPrice > 0) ? tagPrice : (scan.current.ocrPrice != null ? scan.current.ocrPrice : getChannelPrice(it, ROOM));
             document.getElementById('scanLinkList').innerHTML = '';
             document.getElementById('scanLinkPick').innerHTML = `<div class="scan-card"><div class="scan-name">${scanEsc(it.productName || '')}</div>
                 <div class="scan-sub">SKU ${scanEsc(it.sku)} · ${scanEsc(it.brandName || '')} · ${it.channels?.crazychicks || 0} in the room</div></div>
@@ -3602,10 +3691,10 @@ async function registerToolVersion(client, toolKey, toolVersion) {
                 const { count, error } = await sbClient.from('crazychicks_tags').select('tag_no', { count: 'exact', head: true }).eq('item_id', itemId).eq('status', 'in_room');
                 if (error || count == null) return;
                 const row = await fetchItemRow(itemId), room = pi(row.crazychicks_qty);
-                if (count <= room) return;
+                if (room !== 0 || count < 1 || isComposite(row)) return;   // v4.5.1: only 0 → 1 (Paul); other counts by hand
                 document.getElementById('scanPanel').insertAdjacentHTML('beforeend',
-                    `<div class="scan-warn" id="scanRoomOffer">${scanEsc(row.sku)}: ${count} tag(s) in the room, but the records say ${room}.
-                     <button class="scan-btn" onclick="scanRoomAddOne('${scanEsc(row.id)}')">➕ Add 1 to the Crazy Chicks room</button></div>`);
+                    `<div class="scan-warn" id="scanRoomOffer">${scanEsc(row.sku)} is not in the Crazy Chicks room yet (room 0).
+                     <button class="scan-btn" onclick="scanRoomAddOne('${scanEsc(row.id)}')">➕ Put 1 in the Crazy Chicks room</button></div>`);
             } catch (e) { console.warn('[scanRoomCheck]', e.message); }
         }
 
@@ -3616,10 +3705,11 @@ async function registerToolVersion(client, toolKey, toolVersion) {
                 const row = await fetchItemRow(itemId);
                 if (isComposite(row)) { showToast(compositeRefusal(row.sku), 'error'); return; }
                 const cc = pi(row.crazychicks_qty), tm = pi(row.treasuremarts_qty), wh = pi(row.qty);
+                if (cc !== 0) { showToast(`${row.sku} already has ${cc} in the Crazy Chicks room — change it by hand if needed. Nothing was changed.`, 'error'); return; }
                 if (tm + cc + 1 > wh) { showToast(`${row.sku}: the warehouse holds ${wh}, so the room cannot hold ${cc + 1}${tm ? ' plus ' + tm + ' at TreasureMarts' : ''}. Receive the stock in V2 first. Nothing was changed.`, 'error'); return; }
                 const updates = { crazychicks_qty: cc + 1 };
                 const capped = capOnline(updates, row);
-                if (!confirm(`Add 1 × ${row.sku} to the Crazy Chicks room?\n\nCrazy Chicks room ${cc}→${cc + 1}` + (capped.length ? '\nOnline capped: ' + capped.join(', ') : '') + '\n\n(The warehouse number does not change — it already counts it.)')) return;
+                if (!confirm(`Put 1 × ${row.sku} in the Crazy Chicks room?\n\nCrazy Chicks room ${cc}→${cc + 1}` + (capped.length ? '\nOnline capped: ' + capped.join(', ') : '') + '\n\n(The warehouse number does not change — it already counts it.)')) return;
                 // Old value in the WHERE: a second tap, or a change made elsewhere meanwhile, writes nothing.
                 const { data, error } = await sbClient.from('items').update(updates).eq('id', row.id).eq('crazychicks_qty', cc).select('id');
                 if (error) { showToast('Not changed: ' + error.message, 'error'); return; }
@@ -3635,7 +3725,9 @@ async function registerToolVersion(client, toolKey, toolVersion) {
             finally { scan.busy = false; }
         }
 
-        // ── Scan audit (option A: records only) ──
+        // ── Scan audit (option A: records only). v4.5.1 (Paul, S104 09-21): a tag is a LABEL, not a unit —
+        // spare tags are printed to use up sheets — but every unit ON THE ROOM'S SHELF carries a sticker,
+        // because their register needs it. So the count is per ITEM: stickers scanned vs the room count.
         async function scanAuditStart() {
             const tags = await sbFetchAll(() => sbClient.from('crazychicks_tags').select('tag_no,item_id,sku,tag_price,status,note').order('tag_no', { ascending: true }));
             scan.audit = { byTag: new Map(tags.map(t => [t.tag_no, t])), scanned: new Set(), unknown: new Set(), started: new Date() };
@@ -3647,25 +3739,48 @@ async function registerToolVersion(client, toolKey, toolVersion) {
             if (A.scanned.has(tagNo) || A.unknown.has(tagNo)) { scanHint('Already counted: ' + tagNo); return; }
             const t = A.byTag.get(tagNo);
             if (t) A.scanned.add(tagNo); else A.unknown.add(tagNo);
-            scanHint(t ? `✓ ${t.sku} (tag ${tagNo})` : `? tag ${tagNo} is not on record`);
+            const it = t ? scanItem(t.item_id) : null;
+            scanHint(t ? `✓ ${t.sku}${it ? ' · ' + (it.productName || '') : ''}` : `? tag ${tagNo} is not linked yet — link it below`);
             scanAuditRender();
+        }
+
+        // Per item: in-room count (the phone's list, refreshed after every write) vs stickers scanned.
+        function scanAuditCounts() {
+            const A = scan.audit, byItem = new Map();
+            for (const n of A.scanned) {
+                const t = A.byTag.get(n); if (!t || t.status !== 'in_room') continue;
+                byItem.set(String(t.item_id), (byItem.get(String(t.item_id)) || 0) + 1);
+            }
+            const rows = [];
+            const ids = new Set([...inventory.filter(i => (i.channels?.crazychicks || 0) > 0).map(i => String(i.id)), ...byItem.keys()]);
+            for (const id of ids) {
+                const it = scanItem(id); if (!it) continue;
+                rows.push({ id, it, room: it.channels?.crazychicks || 0, scanned: byItem.get(id) || 0 });
+            }
+            return rows.sort((a, b) => (a.it.sku || '').localeCompare(b.it.sku || ''));
         }
 
         function scanAuditRender() {
             const A = scan.audit; if (!A) return;
-            const all = [...A.byTag.values()], inRoom = all.filter(t => t.status === 'in_room');
-            const notScanned = inRoom.filter(t => !A.scanned.has(t.tag_no));
+            const rows = scanAuditCounts();
+            const inRoom = rows.filter(r => r.room > 0);
+            const units = inRoom.reduce((s, r) => s + r.room, 0), found = inRoom.reduce((s, r) => s + Math.min(r.scanned, r.room), 0);
+            const notFound = inRoom.filter(r => r.scanned < r.room);
+            const over = rows.filter(r => r.scanned > r.room);
             const offShelf = [...A.scanned].map(n => A.byTag.get(n)).filter(t => t && t.status !== 'in_room');
-            const found = inRoom.length - notScanned.length;
-            const nm = t => { const it = scanItem(t.item_id); return scanEsc(t.sku) + (it ? ' · ' + scanEsc(it.productName || '') : ''); };
-            let h = `<div class="scan-sum"><b>${found}</b> of <b>${inRoom.length}</b> tags in the room found` + (A.unknown.size ? ` · <b>${A.unknown.size}</b> not on record` : '') + (offShelf.length ? ` · <b>${offShelf.length}</b> should be off the shelf` : '') + `</div>`;
-            if (A.unknown.size) h += `<div class="scan-h">Scanned but not on record (${A.unknown.size})</div>` +
+            const nm = it => `<b>${scanEsc(it.sku)}</b> · ${scanEsc(it.productName || '')}`;
+            let h = `<div class="scan-sum"><b>${found}</b> of <b>${units}</b> units in the room found` +
+                (notFound.length ? ` · <b>${notFound.length}</b> item(s) not fully found` : '') + (A.unknown.size ? ` · <b>${A.unknown.size}</b> tag(s) to link` : '') + `</div>`;
+            if (A.unknown.size) h += `<div class="scan-h">Scanned but not linked yet (${A.unknown.size}) — link them so they count</div>` +
                 [...A.unknown].map(n => `<div class="scan-row"><span>Tag ${scanEsc(n)}</span><button class="scan-mini" onclick="scanAuditLink('${scanEsc(n)}')">🔗 Link</button></div>`).join('');
+            h += `<div class="scan-h">Not found in the scan (${notFound.length}) — look again; what is still missing after the week's sales are entered is written off from Audit History</div>` +
+                (notFound.length ? notFound.map(r => `<div class="scan-row"><span>${nm(r.it)}<br><span class="scan-note">room ${r.room} · scanned ${r.scanned} → <b>${r.room - r.scanned} not found</b></span></span></div>`).join('')
+                                 : '<div class="scan-note">Everything the room count says is there was scanned.</div>');
+            if (over.length) h += `<div class="scan-h">More scanned than the room count (${over.length})</div>` +
+                over.map(r => `<div class="scan-row"><span>${nm(r.it)}<br><span class="scan-note">room ${r.room} · scanned ${r.scanned}</span></span><button class="scan-mini" onclick="scanRoomSet('${scanEsc(r.id)}', ${r.room}, ${r.scanned})">Set room to ${r.scanned}</button></div>`).join('');
             if (offShelf.length) h += `<div class="scan-h">Replaced or sold tags still on the shelf (${offShelf.length})</div>` +
-                offShelf.map(t => `<div class="scan-row"><span>Tag ${scanEsc(t.tag_no)} · ${nm(t)} — ${t.status === 'pulled' ? 'replaced' : scanEsc(t.status)}</span></div>`).join('');
-            h += `<div class="scan-h">Expected but not scanned (${notScanned.length}) — look again</div>` +
-                (notScanned.length ? notScanned.map(t => `<div class="scan-row"><span>Tag ${scanEsc(t.tag_no)} · ${nm(t)}</span></div>`).join('') : '<div class="scan-note">Every tag on record was scanned.</div>');
-            h += `<div class="scan-note" style="margin-top:10px;">Nothing is written off here. "Put in the checklist" fills the room checklist from the tags; review it and Save the audit as usual.</div>
+                offShelf.map(t => { const it = scanItem(t.item_id); return `<div class="scan-row"><span>Tag ${scanEsc(t.tag_no)} · ${it ? nm(it) : scanEsc(t.sku)} — ${t.status === 'pulled' ? 'replaced' : scanEsc(t.status)}</span></div>`; }).join('');
+            h += `<div class="scan-note" style="margin-top:10px;">Nothing is written off here. "Put in the checklist" sets each item's Found count from the stickers scanned; review it and Save the audit as usual.</div>
                   <div class="scan-btns"><button class="scan-btn" onclick="scanAuditFinish()">✓ Put in the checklist</button></div>`;
             scanPanel(h);
         }
@@ -3674,33 +3789,52 @@ async function registerToolVersion(client, toolKey, toolVersion) {
 
         function scanAuditFinish() {
             const A = scan.audit; if (!A) return;
+            if (A.unknown.size && !confirm(`${A.unknown.size} scanned tag(s) are not linked yet, so their items will count as not found.\n\nPut the scan in the checklist anyway?`)) return;
             loadTreasureMartAudit();
-            const byItem = new Map();
-            for (const t of A.byTag.values()) {
-                if (t.status !== 'in_room') continue;
-                const g = byItem.get(String(t.item_id)) || { tags: 0, scanned: 0 };
-                g.tags++; if (A.scanned.has(t.tag_no)) g.scanned++;
-                byItem.set(String(t.item_id), g);
-            }
-            let decided = 0, byEye = 0;
-            for (const [itemId, g] of byItem) {
-                const item = scanItem(itemId); if (!item) continue;
-                const eQ = item.channels?.crazychicks || 0; if (eQ <= 0) continue;
-                const prev = treasureMartAudit[itemId] || { status: 'unchecked', foundQty: eQ, note: '' };
+            let set = 0;
+            for (const r of scanAuditCounts()) {
+                if (r.room <= 0) continue;
+                const prev = treasureMartAudit[r.id] || { status: 'unchecked', foundQty: r.room, note: '' };
                 if (prev.status === 'removed') continue;   // a deliberate "brought home" stays as it is
-                if (g.tags >= eQ) {   // every unit in the room carries a tag on record: the scan decides
-                    const f = Math.min(g.scanned, eQ);
-                    prev.foundQty = f; prev.status = f === eQ ? 'found' : f === 0 ? 'missing' : 'partial'; decided++;
-                } else byEye++;       // some units have no tag on record — the status is left for Mary
-                const tagNote = `[scan: ${g.scanned} of ${g.tags} tag(s)` + (g.tags < eQ ? `; ${eQ - g.tags} unit(s) have no tag on record — check by eye` : '') + ']';
-                prev.note = [(prev.note || '').replace(/\s*\[scan:[^\]]*\]/g, '').trim(), tagNote].filter(Boolean).join(' ');
-                treasureMartAudit[itemId] = prev;
+                const f = Math.min(r.scanned, r.room);
+                prev.foundQty = f; prev.status = f === r.room ? 'found' : f === 0 ? 'missing' : 'partial';
+                prev.note = [(prev.note || '').replace(/\s*\[scan:[^\]]*\]/g, '').trim(), `[scan: ${r.scanned} of ${r.room}]`].filter(Boolean).join(' ');
+                treasureMartAudit[r.id] = prev; set++;
             }
             saveTreasureMartAuditState();
             scan.audit = null;
             closeScanner();
             showRoomAudit(true);
-            showResult(`Scan put in the room checklist: ${decided} item(s) set from their tags` + (byEye ? `, ${byEye} with untagged units left for you to check` : '') + '. Nothing was written off — review the checklist and Save the audit as usual.', 'success');
+            showResult(`Scan put in the room checklist for ${set} item(s). Nothing was written off — review the checklist and Save the audit as usual.`, 'success');
+        }
+
+        // v4.5.1: from the scan audit — set the room count to what was scanned (only ever UP from here;
+        // a lower count is the checklist's Partial/Missing, and a write-off stays a deliberate step).
+        async function scanRoomSet(itemId, from, to) {
+            if (scan.busy || !requireOnline()) return;
+            scan.busy = true;
+            try {
+                const row = await fetchItemRow(itemId);
+                if (isComposite(row)) { showToast(compositeRefusal(row.sku), 'error'); return; }
+                const cc = pi(row.crazychicks_qty), tm = pi(row.treasuremarts_qty), wh = pi(row.qty);
+                if (cc !== from) { showToast(`${row.sku}: the room count is now ${cc}, not ${from} — nothing was changed. Scan again.`, 'error'); return; }
+                if (to <= cc) return;
+                if (tm + to > wh) { showToast(`${row.sku}: the warehouse holds ${wh}, so the room cannot hold ${to}${tm ? ' plus ' + tm + ' at TreasureMarts' : ''}. Receive the stock in V2 first. Nothing was changed.`, 'error'); return; }
+                const updates = { crazychicks_qty: to };
+                const capped = capOnline(updates, row);
+                if (!confirm(`Set the Crazy Chicks room for ${row.sku} to ${to}?\n\nCrazy Chicks room ${cc}→${to}` + (capped.length ? '\nOnline capped: ' + capped.join(', ') : '') + '\n\n(The warehouse number does not change — it already counts them.)')) return;
+                const { data, error } = await sbClient.from('items').update(updates).eq('id', row.id).eq('crazychicks_qty', cc).select('id');
+                if (error) { showToast('Not changed: ' + error.message, 'error'); return; }
+                if (!data || data.length !== 1) { showToast(`${row.sku} changed meanwhile — nothing was written.`, 'error'); return; }
+                const after = await chqRead(row.id);
+                const res = await queueChannelQtyDeltas(row, after, 'mobile_room_set');
+                logActivity('INVENTORY', 'ROOM_SET', ROOM, `${row.sku}: Crazy Chicks room ${cc}→${to} (scan audit, phone)`, { item_id: row.id, room_before: cc, room_after: to, capped }, row.sku);
+                await refreshItem(row.id);
+                const bad = res.unknown || res.error || res.unpushable.length;
+                showResult(`${row.sku}: Crazy Chicks room ${cc}→${to}` + (capped.length ? ` · online capped: ${capped.join(', ')}` : '') + ` · ${queueOutcomeText(res)}`, bad ? 'warning' : 'success');
+                scanAuditRender();
+            } catch (e) { showToast(e.message, 'error'); }
+            finally { scan.busy = false; }
         }
 
         async function initApp() {
