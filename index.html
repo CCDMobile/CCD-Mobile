@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
 ================================================================================
-CCD MOBILE INVENTORY MODULE v4.5.1-Supabase
+CCD MOBILE INVENTORY MODULE v4.5.2-Supabase
 ================================================================================
 Pure display terminal backed by Supabase. Desktop CCD-INVENTORY-SYSTEM.html
 is the ONLY calculation engine. Mobile reads stored values — never calculates
@@ -34,6 +34,12 @@ v4.5.1 (S104, Paul): a tag is a LABEL, not a unit. An unlinked tag's printed
       count vs stickers scanned — lists what was not found, and can set the room
       up to what was scanned. Nothing is written off by the scan.
       Build notes: claude\CCD-S104-Build-Notes-Mobile-v4_5_1.md
+v4.5.2 (S109, Paul): Sales History "Reverse" now finds the sale by its own id.
+      It used the row's position in the FILTERED list to pick from the UNFILTERED
+      list, so with a channel filter on it offered — and could reverse — a
+      different sale (prod: 2851460-L, reversed by mistake 09-23, repaired S109).
+      The confirm box now shows the SKU and the sale date too.
+      Build notes: claude\CCD-S109-Build-Notes-Mobile-v4_5_2.md
 ================================================================================
 -->
 <html lang="en">
@@ -680,7 +686,7 @@ v4.5.1 (S104, Paul): a tag is a LABEL, not a unit. An unlinked tag's printed
                 </div>
                 <div class="settings-section">
                     <div class="settings-section-title">Version</div>
-                    <div class="settings-item"><div class="settings-item-label">App Version</div><div class="settings-item-value">v4.5.1 Supabase</div></div>
+                    <div class="settings-item"><div class="settings-item-label">App Version</div><div class="settings-item-value">v4.5.2 Supabase</div></div>
                 </div>
             </div>
         </div>
@@ -966,7 +972,7 @@ v4.5.1 (S104, Paul): a tag is a LABEL, not a unit. An unlinked tag's printed
 
     <script>
         // ============================================================================
-        // CCD MOBILE v4.5.1 — SUPABASE EDITION (TOOL_VERSION below)
+        // CCD MOBILE v4.5.2 — SUPABASE EDITION (TOOL_VERSION below)
         // Pure display terminal. Desktop is the calculation engine.
         // Mobile reads stored values. Mobile never calculates prices.
         // ============================================================================
@@ -989,7 +995,7 @@ v4.5.1 (S104, Paul): a tag is a LABEL, not a unit. An unlinked tag's printed
         // Crazy Chicks is a ROOM (Paul, S103). On screen it is "Crazy Chicks" or
         // "Chicks" — never "CC" (L-5).
         // ============================================================================
-        const TOOL_VERSION = '4.5.1';
+        const TOOL_VERSION = '4.5.2';
         const DEVICE_LABEL = 'Mobile-v' + TOOL_VERSION;
         const ROOM = 'crazychicks';
         const ROOM_LABEL = 'Crazy Chicks';
@@ -3074,7 +3080,7 @@ async function registerToolVersion(client, toolKey, toolVersion) {
                     <div class="sale-hist-right" style="text-align:right;">
                         <div class="sale-hist-amount" style="${isReversed?'text-decoration:line-through;':''}">$${revenue.toFixed(2)}</div>
                         <div class="sale-hist-qty">×${r.qty_sold || 1} @ $${(r.sale_price||0).toFixed(2)}</div>
-                        ${!isReversed ? `<button onclick="reverseSaleMobile(${idx})" style="margin-top:4px;padding:4px 10px;background:#DC2626;color:white;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;">↩ Reverse</button>` : ''}
+                        ${!isReversed ? `<button onclick="reverseSaleMobile(${Number(r.id) || 0})" style="margin-top:4px;padding:4px 10px;background:#DC2626;color:white;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;">↩ Reverse</button>` : ''}
                     </div>
                 </div>`;
             }).join('');
@@ -3087,13 +3093,14 @@ async function registerToolVersion(client, toolKey, toolVersion) {
         // K-8 asymmetry kept as V2 has it); a Crazy Chicks sale returns to the room.
         // A Set/bundle sale is reversed in V2, where the engine returns the pieces.
         // ============================================================================
-        async function reverseSaleMobile(idx) {
-            const sale = salesHistoryCache && salesHistoryCache[idx];
-            if (!sale) return;
+        async function reverseSaleMobile(saleId) {
+            // v4.5.2 (S109): by the sale's OWN id — never a list position (the list on screen may be filtered).
+            const sale = (salesHistoryCache || []).find(r => String(r.id) === String(saleId));
+            if (!sale || !saleId) { showToast('That sale is not in the list any more — reopen Sales History. Nothing was changed.', 'error'); return; }
             if (!requireOnline()) return;
             const qty = pi(sale.qty_sold) || 1;
             const channel = sale.sale_channel || 'unknown';
-            if (!confirm(`Reverse this sale?\n\n${sale.product_name || sale.sku}\nChannel: ${CH_LABEL[channel] || channel} · Qty: ${qty}\n$${pf(sale.sale_price).toFixed(2)}\n\nThis restores ${qty} unit(s) and pushes the corrected quantities.`)) return;
+            if (!confirm(`Reverse this sale?\n\n${sale.product_name || sale.sku}\nSKU: ${sale.sku || '—'} · sold ${sale.sale_date || '—'}\nChannel: ${CH_LABEL[channel] || channel} · Qty: ${qty}\n$${pf(sale.sale_price).toFixed(2)}\n\nThis restores ${qty} unit(s) and pushes the corrected quantities.`)) return;
             try {
                 const { data: freshSale, error: sErr } = await sbClient.from('sales_history').select('id,item_id,sku,qty_sold,status,reversed_at,notes').eq('id', sale.id).single();
                 if (sErr || !freshSale) throw new Error('Could not read the sale: ' + (sErr ? sErr.message : 'not found'));
