@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
 ================================================================================
-CCD MOBILE INVENTORY MODULE v4.5.2-Supabase
+CCD MOBILE INVENTORY MODULE v4.5.3-Supabase
 ================================================================================
 Pure display terminal backed by Supabase. Desktop CCD-INVENTORY-SYSTEM.html
 is the ONLY calculation engine. Mobile reads stored values — never calculates
@@ -40,6 +40,13 @@ v4.5.2 (S109, Paul): Sales History "Reverse" now finds the sale by its own id.
       different sale (prod: 2851460-L, reversed by mistake 09-23, repaired S109).
       The confirm box now shows the SKU and the sale date too.
       Build notes: claude\CCD-S109-Build-Notes-Mobile-v4_5_2.md
+v4.5.3 (S112, Paul): the Tera Bluetooth scanner. It pairs as a keyboard and
+      types each tag number followed by Enter; the scan screen now takes that
+      exactly as if the camera had read the tag. The room audit has a
+      "Scanner" button that leaves the camera off. A Storage Mode upload (all
+      stored scans typed at once) is counted too; a tag already counted is
+      counted once. The audit still records only — nothing is written off.
+      Build notes: claude\CCD-S112-Build-Notes-Mobile-v4_5_3.md
 ================================================================================
 -->
 <html lang="en">
@@ -387,6 +394,11 @@ v4.5.2 (S109, Paul): Sales History "Reverse" now finds the sale by its own id.
         .scan-hint { position: absolute; left: 0; right: 0; bottom: 8px; text-align: center; color: white; font-size: 13px; text-shadow: 0 1px 3px #000; }
         .scan-panel { flex: 1; overflow-y: auto; background: #fff; padding: 12px; border-radius: 14px 14px 0 0; }
         .scan-actions { background: #fff; padding: 8px 12px; padding-bottom: max(8px, env(safe-area-inset-bottom)); border-top: 1px solid #E5E7EB; }
+        .scan-screen.wedge .scan-view { flex: 0 0 auto; padding: 18px 12px; }
+        .scan-screen.wedge .scan-view video, .scan-screen.wedge .scan-band, .scan-screen.wedge .scan-line { display: none; }
+        .scan-screen.wedge .scan-hint { position: static; font-size: 15px; }
+        .scan-wedge { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 13px; color: #374151; }
+        .scan-wedge input { flex: 1; min-width: 0; padding: 9px; border: 2px solid #DB2777; border-radius: 8px; font-size: 16px; }
         .scan-actions button { width: 100%; padding: 10px; border: 1px solid #D1D5DB; border-radius: 8px; background: white; font-size: 14px; cursor: pointer; }
         .scan-msg { font-size: 14px; color: #374151; margin-bottom: 8px; }
         .scan-err { font-size: 14px; color: #991B1B; background: #FEF2F2; border: 1px solid #FECACA; border-radius: 8px; padding: 10px; margin-bottom: 8px; }
@@ -686,7 +698,7 @@ v4.5.2 (S109, Paul): Sales History "Reverse" now finds the sale by its own id.
                 </div>
                 <div class="settings-section">
                     <div class="settings-section-title">Version</div>
-                    <div class="settings-item"><div class="settings-item-label">App Version</div><div class="settings-item-value">v4.5.2 Supabase</div></div>
+                    <div class="settings-item"><div class="settings-item-label">App Version</div><div class="settings-item-value">v4.5.3 Supabase</div></div>
                 </div>
             </div>
         </div>
@@ -727,6 +739,7 @@ v4.5.2 (S109, Paul): Sales History "Reverse" now finds the sale by its own id.
                     <button class="btn" onclick="showMissingItemsReport()" style="flex: 1; min-width: 100px; font-size: 13px; padding: 10px; background: #DC2626; color: white;">⚠️ Issues</button>
                     <button class="btn" onclick="showAuditHistory()" style="flex: 1; min-width: 100px; font-size: 13px; padding: 10px; background: #7C3AED; color: white;">📋 History</button>
                     <button class="btn" id="scanAuditBtn" onclick="openScanner('audit')" style="flex: 1; min-width: 100px; font-size: 13px; padding: 10px; background: #DB2777; color: white;">📷 Scan tags</button>
+                    <button class="btn" id="scanAuditWedgeBtn" onclick="openScanner('audit', 'wedge')" style="flex: 1; min-width: 100px; font-size: 13px; padding: 10px; background: #9D174D; color: white;">🔫 Scanner</button>
                 </div>
                 <div style="padding: 8px 15px; background: white; border-bottom: 1px solid #E5E7EB;">
                     <input type="text" id="tmSearchInput" placeholder="🔍 Search brand or product..." oninput="renderTMList()" style="width: 100%; padding: 9px 12px; border: 2px solid #E5E7EB; border-radius: 8px; font-size: 14px; outline: none; box-sizing: border-box;" onfocus="this.style.borderColor='#10B981'" onblur="this.style.borderColor='#E5E7EB'">
@@ -964,7 +977,7 @@ v4.5.2 (S109, Paul): Sales History "Reverse" now finds the sale by its own id.
             <div class="scan-hint" id="scanHint">Starting the camera…</div>
         </div>
         <div class="scan-panel" id="scanPanel"></div>
-        <div class="scan-actions"><button onclick="scanTypeTag()">⌨️ Type a tag number instead</button></div>
+        <div class="scan-actions"><label class="scan-wedge" for="scanWedge">🔫 Scanner <input id="scanWedge" inputmode="none" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="pull the trigger — tags land here" onkeydown="scanWedgeKey(event)"></label><button onclick="scanTypeTag()">⌨️ Type a tag number instead</button></div>
     </div>
 
     <!-- Toast -->
@@ -972,7 +985,7 @@ v4.5.2 (S109, Paul): Sales History "Reverse" now finds the sale by its own id.
 
     <script>
         // ============================================================================
-        // CCD MOBILE v4.5.2 — SUPABASE EDITION (TOOL_VERSION below)
+        // CCD MOBILE v4.5.3 — SUPABASE EDITION (TOOL_VERSION below)
         // Pure display terminal. Desktop is the calculation engine.
         // Mobile reads stored values. Mobile never calculates prices.
         // ============================================================================
@@ -995,7 +1008,7 @@ v4.5.2 (S109, Paul): Sales History "Reverse" now finds the sale by its own id.
         // Crazy Chicks is a ROOM (Paul, S103). On screen it is "Crazy Chicks" or
         // "Chicks" — never "CC" (L-5).
         // ============================================================================
-        const TOOL_VERSION = '4.5.2';
+        const TOOL_VERSION = '4.5.3';
         const DEVICE_LABEL = 'Mobile-v' + TOOL_VERSION;
         const ROOM = 'crazychicks';
         const ROOM_LABEL = 'Crazy Chicks';
@@ -3486,19 +3499,67 @@ async function registerToolVersion(client, toolKey, toolVersion) {
             });
         }
 
-        async function openScanner(mode) {
+        async function openScanner(mode, input) {
             if (!requireOnline()) return;   // tags are read from the database; nothing is scanned offline
             scan.mode = mode === 'audit' ? 'audit' : 'find';
             scan.current = null; scan.paused = false; scan.last = null; scan.busy = false;
+            scan.wedgeOnly = input === 'wedge'; scan.queue = []; scan.audit = null; scan.wbuf = ''; scan.wAt = 0;   // v4.5.3
+            document.getElementById('scanModal').classList.toggle('wedge', scan.wedgeOnly);
+            const wb = document.getElementById('scanWedge'); if (wb) wb.value = '';
             document.getElementById('scanTitle').textContent = scan.mode === 'audit' ? '🐥 Scan audit — Crazy Chicks room' : '📷 Scan a Crazy Chicks tag';
             document.getElementById('scanModal').classList.add('active');
             scanPanel('<div class="scan-msg">Getting ready…</div>');
             try {
                 if (scan.mode === 'audit') await scanAuditStart();
-                else scanPanel('<div class="scan-msg">Point the camera at the tag and put the barcode on the <b style="color:#DC2626;">red line</b>.</div>');
+                else scanPanel(scan.wedgeOnly ? '<div class="scan-msg">Scan a tag with the scanner.</div>' : '<div class="scan-msg">Point the camera at the tag and put the barcode on the <b style="color:#DC2626;">red line</b>, or scan it with the scanner.</div>');
+                if (scan.wedgeOnly) { scanHint('🔫 Scanner ready — pull the trigger on each sticker (or upload the stored scans)'); scanWedgeFocus(); scanDrainQueue(); return; }
                 await scanLoadZXing();
             } catch (e) { scanPanel(`<div class="scan-err">${scanEsc(e.message)}</div>`); return; }
+            scanWedgeFocus(); scanDrainQueue();
             await scanStartCamera();
+        }
+
+        // ── v4.5.3 (S112, Paul): the Bluetooth scanner is a KEYBOARD — it types the tag number and presses
+        // Enter. Taken from the scanner box (focused, phone keyboard kept down by inputmode=none) or, if
+        // focus is elsewhere on the scan screen, from the page itself. A search box being typed in is left alone.
+        function scanWedgeFocus() {
+            const wb = document.getElementById('scanWedge'), a = document.activeElement;
+            if (!wb || !document.getElementById('scanModal').classList.contains('active')) return;
+            if (a && a !== wb && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.tagName === 'SELECT')) return;
+            try { wb.focus({ preventScroll: true }); } catch (e) {}
+        }
+        function scanWedgeTake(raw) {
+            const t = String(raw || '').replace(/[^0-9]/g, '');
+            if (!t) return;
+            if (t.length < 4) { scanHint('Not a tag number: ' + raw); return; }
+            scanTyped(t);
+        }
+        function scanWedgeKey(e) {
+            if (e.key !== 'Enter' && e.key !== 'Tab') return;
+            e.preventDefault(); e.stopPropagation();
+            const wb = e.target, v = wb.value; wb.value = '';
+            scanWedgeTake(v);
+        }
+        document.addEventListener('keydown', e => {
+            if (!document.getElementById('scanModal')?.classList.contains('active')) return;
+            const a = e.target;
+            if (a && a.id === 'scanWedge') return;   // the box handles itself
+            if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.tagName === 'SELECT')) return;
+            const now = Date.now();
+            if (now - (scan.wAt || 0) > 1500) scan.wbuf = '';
+            scan.wAt = now;
+            if (/^[0-9]$/.test(e.key)) { scan.wbuf = (scan.wbuf || '') + e.key; e.preventDefault(); return; }
+            if (e.key === 'Enter' || e.key === 'Tab') { const v = scan.wbuf; scan.wbuf = ''; if (v) { e.preventDefault(); scanWedgeTake(v); } return; }
+            scan.wbuf = '';
+        });
+        // A tag number typed by the scanner. Before the audit has loaded its tag list, it waits in the queue.
+        function scanTyped(tagNo) {
+            if (scan.mode === 'audit' && !scan.audit) { scan.queue.push(tagNo); scanHint('Getting ready — ' + scan.queue.length + ' scan(s) waiting'); return; }
+            scanAccept(tagNo, 'scanner');
+        }
+        function scanDrainQueue() {
+            const q = (scan.queue || []).splice(0);
+            for (const t of q) scanAccept(t, 'scanner');
         }
 
         async function scanStartCamera() {
@@ -3526,8 +3587,8 @@ async function registerToolVersion(client, toolKey, toolVersion) {
         function closeScanner() {
             scanStopCamera();
             if (scan.ocr) { scan.ocr.then(w => w.terminate()).catch(() => {}); scan.ocr = null; }
-            scan.frames = new Map();
-            document.getElementById('scanModal').classList.remove('active');
+            scan.frames = new Map(); scan.queue = []; scan.wbuf = ''; scan.wedgeOnly = false;
+            document.getElementById('scanModal').classList.remove('active', 'wedge');
             if (document.getElementById('treasureMartModal')?.classList.contains('active')) renderTMList();
         }
 
@@ -3559,9 +3620,9 @@ async function registerToolVersion(client, toolKey, toolVersion) {
             else { scan.last = text; scan.lastAt = now; }
         }
 
-        function scanAccept(tagNo) {
+        function scanAccept(tagNo, via) {
             if (navigator.vibrate) { try { navigator.vibrate(60); } catch (e) {} }
-            const f = scanGrabFrame();   // v4.5.1: kept so an unlinked tag's printed SKU can be read
+            const f = via === 'scanner' ? null : scanGrabFrame();   // v4.5.1: kept so an unlinked tag's printed SKU can be read
             if (f) { scan.frames.set(tagNo, f); if (scan.frames.size > 40) scan.frames.delete(scan.frames.keys().next().value); }
             window.SCAN_LOG = (window.SCAN_LOG || []).concat([tagNo]);
             if (scan.mode === 'audit') { scanAuditAdd(tagNo); return; }
@@ -3748,6 +3809,7 @@ async function registerToolVersion(client, toolKey, toolVersion) {
             if (t) A.scanned.add(tagNo); else A.unknown.add(tagNo);
             const it = t ? scanItem(t.item_id) : null;
             scanHint(t ? `✓ ${t.sku}${it ? ' · ' + (it.productName || '') : ''}` : `? tag ${tagNo} is not linked yet — link it below`);
+            if (scan.paused) return;   // v4.5.3: a tag is being linked — counted; the list redraws on "scan next"
             scanAuditRender();
         }
 
@@ -3790,6 +3852,7 @@ async function registerToolVersion(client, toolKey, toolVersion) {
             h += `<div class="scan-note" style="margin-top:10px;">Nothing is written off here. "Put in the checklist" sets each item's Found count from the stickers scanned; review it and Save the audit as usual.</div>
                   <div class="scan-btns"><button class="scan-btn" onclick="scanAuditFinish()">✓ Put in the checklist</button></div>`;
             scanPanel(h);
+            scanWedgeFocus();   // v4.5.3
         }
 
         function scanAuditLink(tagNo) { scan.paused = true; scanShowUnknown(tagNo); }
