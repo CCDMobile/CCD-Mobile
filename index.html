@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
 ================================================================================
-CCD MOBILE INVENTORY MODULE v4.5.3-Supabase
+CCD MOBILE INVENTORY MODULE v4.5.4-Supabase
 ================================================================================
 Pure display terminal backed by Supabase. Desktop CCD-INVENTORY-SYSTEM.html
 is the ONLY calculation engine. Mobile reads stored values — never calculates
@@ -47,6 +47,13 @@ v4.5.3 (S112, Paul): the Tera Bluetooth scanner. It pairs as a keyboard and
       stored scans typed at once) is counted too; a tag already counted is
       counted once. The audit still records only — nothing is written off.
       Build notes: claude\CCD-S112-Build-Notes-Mobile-v4_5_3.md
+v4.5.4 (S112, Paul): a tag keeps the PRODUCT NAME printed on it. Crazy
+      Chicks' statement lists product names only, so the name is how a
+      statement line is matched to our item. Linking a tag now reads the
+      name off the label (camera) into a box you check; a scanner scan
+      has no picture, so you type it. A tag already on record with no
+      name offers a box to add it. Nothing else changes.
+      Build notes: claude\CCD-S112-Build-Notes-Mobile-v4_5_4.md
 ================================================================================
 -->
 <html lang="en">
@@ -698,7 +705,7 @@ v4.5.3 (S112, Paul): the Tera Bluetooth scanner. It pairs as a keyboard and
                 </div>
                 <div class="settings-section">
                     <div class="settings-section-title">Version</div>
-                    <div class="settings-item"><div class="settings-item-label">App Version</div><div class="settings-item-value">v4.5.3 Supabase</div></div>
+                    <div class="settings-item"><div class="settings-item-label">App Version</div><div class="settings-item-value">v4.5.4 Supabase</div></div>
                 </div>
             </div>
         </div>
@@ -985,7 +992,7 @@ v4.5.3 (S112, Paul): the Tera Bluetooth scanner. It pairs as a keyboard and
 
     <script>
         // ============================================================================
-        // CCD MOBILE v4.5.3 — SUPABASE EDITION (TOOL_VERSION below)
+        // CCD MOBILE v4.5.4 — SUPABASE EDITION (TOOL_VERSION below)
         // Pure display terminal. Desktop is the calculation engine.
         // Mobile reads stored values. Mobile never calculates prices.
         // ============================================================================
@@ -1008,7 +1015,7 @@ v4.5.3 (S112, Paul): the Tera Bluetooth scanner. It pairs as a keyboard and
         // Crazy Chicks is a ROOM (Paul, S103). On screen it is "Crazy Chicks" or
         // "Chicks" — never "CC" (L-5).
         // ============================================================================
-        const TOOL_VERSION = '4.5.3';
+        const TOOL_VERSION = '4.5.4';
         const DEVICE_LABEL = 'Mobile-v' + TOOL_VERSION;
         const ROOM = 'crazychicks';
         const ROOM_LABEL = 'Crazy Chicks';
@@ -3464,7 +3471,30 @@ async function registerToolVersion(client, toolKey, toolVersion) {
                 }
             }
             const m = /\$\s?(\d{1,4}\.\d{2})/.exec(data.text || '') || /(?:^|\s)(\d{1,4}\.\d{2})(?:\s|$)/.exec(data.text || '');
-            return { items: [...found.values()], price: m ? parseFloat(m[1]) : null };
+            return { items: [...found.values()], price: m ? parseFloat(m[1]) : null, name: scanReadName(data.lines || [], [...found.values()]) };
+        }
+
+        // v4.5.4: the product name printed on the tag (Crazy Chicks' statement lists names only). The label reads
+        // "[barcode] $price" / NAME / "CCD  SKU": take the line above the SKU line, else the line with the most letters
+        // that is not the CCD/SKU line. Only a SUGGESTION — it goes into a box the person checks before Link.
+        function scanCleanName(t) {
+            return String(t || '').replace(/\$\s?\d{1,4}[.,]\d{2}/g, ' ').replace(/[|\[\]{}_=~]+/g, ' ')
+                .replace(/\b[Il1]{3,}\b/g, ' ').replace(/\s+/g, ' ').replace(/^[^A-Za-z0-9]+/, '').trim();
+        }
+        function scanReadName(lines, items) {
+            // words on the price row can be joined onto the name line (the price sits right of the name): keep only the
+            // words level with the line's first word
+            const L = lines.map(l => { const ws = (l.words || []).filter(w => w && w.bbox); if (!ws.length) return String(l.text || '').trim();
+                const y = ws[0].bbox.y0, h = Math.max(8, ws[0].bbox.y1 - ws[0].bbox.y0);
+                return ws.filter(w => Math.abs(w.bbox.y0 - y) < h * 0.6).map(w => w.text).join(' ').trim(); }).filter(Boolean);
+            const letters = t => (t.match(/[A-Za-z]/g) || []).length;
+            const isSkuLine = t => /^\s*(CCD|CC[OP0]|C[CO]{2})\b/i.test(t) || items.some(i => scanNorm(i.sku).length >= 4 && scanNorm(t).includes(scanNorm(i.sku)));
+            const ok = c => letters(c) >= 4 && letters(c) >= c.replace(/\s/g, '').length * 0.6 && !/^\s*(CCD|CC[OP0]|C[CO]{2})\s*$/i.test(c);
+            const k = L.findIndex(isSkuLine);
+            for (let j = k - 1; j >= 0; j--) { const c = scanCleanName(L[j]); if (ok(c)) return c.slice(0, 80); }
+            const cands = L.filter(t => !isSkuLine(t)).map(scanCleanName).filter(ok);
+            cands.sort((a, b) => letters(b) - letters(a));
+            return cands.length ? cands[0].slice(0, 80) : null;
         }
 
         async function scanAutoLink(tagNo) {
@@ -3477,6 +3507,9 @@ async function registerToolVersion(client, toolKey, toolVersion) {
             catch (e) { if (document.getElementById('scanAuto')) document.getElementById('scanAuto').innerHTML = `<div class="scan-note">Could not read the tag (${scanEsc(e.message)}) — type the SKU or product name.</div>`; return; }
             if (!scan.current || scan.current.tag_no !== tagNo || !document.getElementById('scanAuto')) return;   // moved on meanwhile
             scan.current.ocrPrice = r.price;
+            scan.current.ocrName = r.name || null;   // v4.5.4
+            const nb = document.getElementById('scanLinkName');   // the person picked before the reading finished
+            if (nb && !nb.value && r.name) nb.value = r.name;
             if (r.items.length === 1) {
                 document.getElementById('scanAuto').innerHTML = `<div class="scan-msg">📖 The tag says <b>${scanEsc(r.items[0].sku)}</b>${r.price != null ? ' at <b>$' + r.price.toFixed(2) + '</b>' : ''} — check it and tap Link.</div>`;
                 scanLinkChoose(String(r.items[0].id), r.price);
@@ -3648,7 +3681,7 @@ async function registerToolVersion(client, toolKey, toolVersion) {
             scanPanel(`<div class="scan-msg">Tag <b>${scanEsc(tagNo)}</b> — looking it up…</div>`);
             if (!requireOnline()) { scanPanel(`<div class="scan-err">Not connected — tag ${scanEsc(tagNo)} could not be looked up.</div><div class="scan-btns"><button class="scan-btn2" onclick="scanNext()">Scan next</button></div>`); return; }
             const { data, error } = await sbClient.from('crazychicks_tags')
-                .select('tag_no,item_id,sku,tag_price,status,printed_on,link_method,note,sale_id,status_changed_at').eq('tag_no', tagNo).limit(1);
+                .select('tag_no,item_id,sku,tag_price,status,printed_on,link_method,note,sale_id,status_changed_at,name_on_tag').eq('tag_no', tagNo).limit(1);
             if (error) { scanPanel(`<div class="scan-err">Could not look up tag ${scanEsc(tagNo)}: ${scanEsc(error.message)}</div><div class="scan-btns"><button class="scan-btn2" onclick="scanNext()">Scan next</button></div>`); return; }
             const t = data && data[0];
             if (!t) { scanShowUnknown(tagNo); return; }
@@ -3658,7 +3691,13 @@ async function registerToolVersion(client, toolKey, toolVersion) {
             const when = t.status_changed_at ? ' on ' + new Date(t.status_changed_at).toLocaleDateString() : '';
             let h = `<div class="scan-card"><div class="scan-card-top"><span class="scan-tag">Tag ${scanEsc(tagNo)}</span><span class="scan-price">$${Number(t.tag_price).toFixed(2)}</span></div>
                 <div class="scan-name">${scanEsc(item ? item.productName : t.sku)}</div>
-                <div class="scan-sub">SKU ${scanEsc(t.sku)}${room != null ? ' · ' + room + ' in the Crazy Chicks room' : ''}${t.link_method === 'phone_scan' ? ' · linked by scan' : t.printed_on ? ' · printed ' + scanEsc(t.printed_on) : ''}</div></div>`;
+                <div class="scan-sub">SKU ${scanEsc(t.sku)}${room != null ? ' · ' + room + ' in the Crazy Chicks room' : ''}${t.link_method === 'phone_scan' ? ' · linked by scan' : t.printed_on ? ' · printed ' + scanEsc(t.printed_on) : ''}</div>
+                ${t.name_on_tag ? `<div class="scan-sub" id="scanTagName">On the tag: “${scanEsc(t.name_on_tag)}”</div>` : ''}</div>`;
+            if (!t.name_on_tag && t.status === 'in_room') {   // v4.5.4: add the name printed on the tag
+                h += `<div class="scan-warn" id="scanNameAdd">No product name on record for this tag — Crazy Chicks' statement lists names only.
+                    <input id="scanTagNameIn" class="scan-input" maxlength="80" autocomplete="off" placeholder="Product name printed on the tag">
+                    <button class="scan-btn2" onclick="scanSaveName()">💾 Save the name</button></div>`;
+            }
             if (t.status === 'in_room') {
                 h += `<div class="scan-btns"><button class="scan-btn" onclick="scanSell()">🐥 Sell 1 in Chicks · $${Number(t.tag_price).toFixed(2)}</button>` +
                      (item ? `<button class="scan-btn2" onclick="scanOpenCard()">Open item</button>` : '') + `<button class="scan-btn2" onclick="scanNext()">Scan next</button></div>`;
@@ -3670,6 +3709,38 @@ async function registerToolVersion(client, toolKey, toolVersion) {
             }
             if (!item) h += `<div class="scan-note">This item is not in the phone's list (inactive?). Refresh, or look it up in V2.</div>`;
             scanPanel(h);
+            if (!t.name_on_tag && t.status === 'in_room') scanPrefillName(tagNo);   // v4.5.4
+        }
+
+        // v4.5.4: read the name off the camera picture into the box (a suggestion; nothing is saved until the button)
+        async function scanPrefillName(tagNo) {
+            const frame = scan.frames && scan.frames.get(tagNo);
+            if (!frame) return;
+            try {
+                const r = await scanReadTag(frame);
+                const box = document.getElementById('scanTagNameIn');
+                if (box && !box.value && r.name && scan.current && scan.current.tag_no === tagNo) { box.value = r.name; box.insertAdjacentHTML('afterend', '<div class="scan-note">📖 Read from the tag — check it.</div>'); }
+            } catch (e) { console.warn('[scanPrefillName]', e.message); }
+        }
+
+        async function scanSaveName() {
+            const c = scan.current;
+            if (scan.busy || !c || !c.tag || !requireOnline()) return;
+            const name = (document.getElementById('scanTagNameIn')?.value || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+            if (!name) { showToast('Type the product name printed on the tag', 'error'); return; }
+            scan.busy = true;
+            try {
+                const { data, error } = await sbClient.from('crazychicks_tags').update({ name_on_tag: name })
+                    .eq('tag_no', c.tag.tag_no).is('name_on_tag', null).select('tag_no');
+                if (error) { showToast('Name not saved: ' + error.message, 'error'); return; }
+                if (!data || !data.length) { showToast('This tag already has a name — scan it again to see it.', 'error'); return; }
+                logActivity('INVENTORY', 'CC_TAG_NAMED', ROOM, `Tag ${c.tag.tag_no} (${c.tag.sku}) name on the tag: "${name}"`, { tag_no: c.tag.tag_no, item_id: c.tag.item_id, name_on_tag: name }, c.tag.sku);
+                c.tag.name_on_tag = name;
+                const box = document.getElementById('scanNameAdd');
+                if (box) box.outerHTML = `<div class="scan-sub" id="scanTagName">On the tag: “${scanEsc(name)}” ✓ saved</div>`;
+                showToast('Name saved', 'success');
+            } catch (e) { showToast(e.message, 'error'); }
+            finally { scan.busy = false; }
         }
 
         function scanOpenCard() {
@@ -3723,6 +3794,9 @@ async function registerToolVersion(client, toolKey, toolVersion) {
                 <div class="scan-sub">SKU ${scanEsc(it.sku)} · ${scanEsc(it.brandName || '')} · ${it.channels?.crazychicks || 0} in the room</div></div>
                 <label class="scan-label">Price printed on the tag</label>
                 <input id="scanLinkPrice" class="scan-input" type="number" step="0.01" inputmode="decimal" value="${p != null ? p.toFixed(2) : ''}">
+                <label class="scan-label">Product name printed on the tag — Crazy Chicks' statement uses it</label>
+                <input id="scanLinkName" class="scan-input" maxlength="80" autocomplete="off" placeholder="e.g. Shaggy Cow Notepad" value="${scanEsc(scan.current.ocrName || '')}">
+                ${scan.current.ocrName ? '<div class="scan-note">📖 Read from the tag — check it.</div>' : '<div class="scan-note">Type it as printed (it can be left blank, but then a statement line can\'t be matched to this tag).</div>'}
                 <button class="scan-btn" onclick="scanLinkSave()">🔗 Link tag ${scanEsc(scan.current.tag_no)} to ${scanEsc(it.sku)}</button>`;
         }
 
@@ -3736,11 +3810,12 @@ async function registerToolVersion(client, toolKey, toolVersion) {
             try {
                 const row = await fetchItemRow(c.pick.id);
                 if (isComposite(row)) { showToast(compositeRefusal(row.sku), 'error'); return; }
+                const nameOnTag = (document.getElementById('scanLinkName')?.value || '').replace(/\s+/g, ' ').trim().slice(0, 80) || null;   // v4.5.4
                 const { error } = await sbClient.from('crazychicks_tags').insert({
-                    tag_no: c.tag_no, item_id: row.id, sku: row.sku, tag_price: money(price), name_on_tag: null, printed_on: null,
+                    tag_no: c.tag_no, item_id: row.id, sku: row.sku, tag_price: money(price), name_on_tag: nameOnTag, printed_on: null,
                     status: 'in_room', link_method: 'phone_scan', created_by: DEVICE_LABEL, note: 'linked on the phone at first scan' });
                 if (error) { showToast('Not linked: ' + error.message, 'error'); return; }
-                logActivity('INVENTORY', 'CC_TAG_LINKED', ROOM, `Tag ${c.tag_no} linked to ${row.sku} on the phone ($${money(price).toFixed(2)})`, { tag_no: c.tag_no, item_id: row.id, tag_price: money(price) }, row.sku);
+                logActivity('INVENTORY', 'CC_TAG_LINKED', ROOM, `Tag ${c.tag_no} linked to ${row.sku} on the phone ($${money(price).toFixed(2)})${nameOnTag ? ' · "' + nameOnTag + '"' : ' · no name'}`, { tag_no: c.tag_no, item_id: row.id, tag_price: money(price), name_on_tag: nameOnTag }, row.sku);
                 if (scan.mode === 'audit' && scan.audit) {
                     scan.audit.byTag.set(c.tag_no, { tag_no: c.tag_no, item_id: row.id, sku: row.sku, tag_price: money(price), status: 'in_room' });
                     scan.audit.unknown.delete(c.tag_no); scan.audit.scanned.add(c.tag_no);
