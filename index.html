@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
 ================================================================================
-CCD MOBILE INVENTORY MODULE v4.5.6-Supabase
+CCD MOBILE INVENTORY MODULE v4.5.7-Supabase
 ================================================================================
 Pure display terminal backed by Supabase. Desktop CCD-INVENTORY-SYSTEM.html
 is the ONLY calculation engine. Mobile reads stored values — never calculates
@@ -70,6 +70,12 @@ v4.5.6 (S112, Paul): every scan BEEPS and FLASHES - green counted,
       typed name is never dropped: leaving asks to save it. The name
       reader says "Reading..." / "Couldn't read" and logs what it saw.
       Build notes: claude\CCD-S112-Build-Notes-Mobile-v4_5_6.md
+v4.5.7 (S112, Paul): a barcode left on the red line is scanned ONCE.
+      4.5.6 kept taking it every second or so (with a beep each time) in
+      the audit. Now it is taken again only after it has been off the
+      line for 2 seconds. The Tera scanner is unchanged (each trigger
+      pull is a scan).
+      Build notes: claude\CCD-S112-Build-Notes-Mobile-v4_5_7.md
 ================================================================================
 -->
 <html lang="en">
@@ -739,7 +745,7 @@ v4.5.6 (S112, Paul): every scan BEEPS and FLASHES - green counted,
                 </div>
                 <div class="settings-section">
                     <div class="settings-section-title">Version</div>
-                    <div class="settings-item"><div class="settings-item-label">App Version</div><div class="settings-item-value">v4.5.6 Supabase</div></div>
+                    <div class="settings-item"><div class="settings-item-label">App Version</div><div class="settings-item-value">v4.5.7 Supabase</div></div>
                 </div>
             </div>
         </div>
@@ -1027,7 +1033,7 @@ v4.5.6 (S112, Paul): every scan BEEPS and FLASHES - green counted,
 
     <script>
         // ============================================================================
-        // CCD MOBILE v4.5.6 — SUPABASE EDITION (TOOL_VERSION below)
+        // CCD MOBILE v4.5.7 — SUPABASE EDITION (TOOL_VERSION below)
         // Pure display terminal. Desktop is the calculation engine.
         // Mobile reads stored values. Mobile never calculates prices.
         // ============================================================================
@@ -1050,7 +1056,7 @@ v4.5.6 (S112, Paul): every scan BEEPS and FLASHES - green counted,
         // Crazy Chicks is a ROOM (Paul, S103). On screen it is "Crazy Chicks" or
         // "Chicks" — never "CC" (L-5).
         // ============================================================================
-        const TOOL_VERSION = '4.5.6';
+        const TOOL_VERSION = '4.5.7';
         const DEVICE_LABEL = 'Mobile-v' + TOOL_VERSION;
         const ROOM = 'crazychicks';
         const ROOM_LABEL = 'Crazy Chicks';
@@ -3693,7 +3699,7 @@ async function registerToolVersion(client, toolKey, toolVersion) {
             if (!requireOnline()) return;   // tags are read from the database; nothing is scanned offline
             scanSoundInit();   // v4.5.6: on the tap, so iOS lets it sound
             scan.mode = mode === 'audit' ? 'audit' : 'find';
-            scan.current = null; scan.paused = false; scan.last = null; scan.busy = false;
+            scan.current = null; scan.paused = false; scan.last = null; scan.busy = false; scan.held = null;   // v4.5.7
             scan.wedgeOnly = input === 'wedge'; scan.queue = []; scan.audit = null; scan.wbuf = ''; scan.wAt = 0;   // v4.5.3
             document.getElementById('scanModal').classList.toggle('wedge', scan.wedgeOnly);
             const wb = document.getElementById('scanWedge'); if (wb) wb.value = '';
@@ -3814,7 +3820,9 @@ async function registerToolVersion(client, toolKey, toolVersion) {
             finally { try { scan.reader.reset(); } catch (e) {} }
             if (!text || !/^\d+$/.test(text)) return;
             const now = Date.now();
-            if (scan.last === text && now - scan.lastAt < 1500) { scan.last = null; scanAccept(text, 'camera', at); }   // the same code twice in a row
+            // v4.5.7 (Paul): a barcode held on the line is taken ONCE; it counts again only after 2 s off the line
+            if (scan.held === text && now - scan.heldAt < 2000) { scan.heldAt = now; return; }
+            if (scan.last === text && now - scan.lastAt < 1500) { scan.last = null; scan.held = text; scan.heldAt = now; scanAccept(text, 'camera', at); }   // the same code twice in a row
             else { scan.last = text; scan.lastAt = now; }
         }
 
