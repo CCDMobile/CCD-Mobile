@@ -1,7 +1,8 @@
 <!DOCTYPE html>
 <!--
 ================================================================================
-CCD MOBILE INVENTORY MODULE v4.5.7-Supabase
+CCD MOBILE INVENTORY MODULE v4.5.8-Supabase
+FIX-W0 2026-10-04: DEPLOY THIS FILE AS index.html (the PWA, manifest and sw.js load ./index.html).
 ================================================================================
 Pure display terminal backed by Supabase. Desktop CCD-INVENTORY-SYSTEM.html
 is the ONLY calculation engine. Mobile reads stored values — never calculates
@@ -76,6 +77,15 @@ v4.5.7 (S112, Paul): a barcode left on the red line is scanned ONCE.
       line for 2 seconds. The Tera scanner is unchanged (each trigger
       pull is a scan).
       Build notes: claude\CCD-S112-Build-Notes-Mobile-v4_5_7.md
+v4.5.8 (2026-10-04, FIX-W1/W8): a sale dated after today is refused,
+      and the date defaults to the phone's LOCAL date (it was UTC, i.e.
+      tomorrow after ~6 pm Mountain). A sale that matches an active sale
+      already on record (same channel, SKU, date and price) asks you to
+      type ANOTHER before recording a second one. A Crazy Chicks sale not
+      started from a scanned tag links the oldest in-room tag of that
+      item SOLD against the sale (status 'sold', sale_id; link_method
+      untouched). Reversing a sale puts its tag back in the room.
+      Spec: APP-FIXES-2026-10-04.md
 ================================================================================
 -->
 <html lang="en">
@@ -745,7 +755,7 @@ v4.5.7 (S112, Paul): a barcode left on the red line is scanned ONCE.
                 </div>
                 <div class="settings-section">
                     <div class="settings-section-title">Version</div>
-                    <div class="settings-item"><div class="settings-item-label">App Version</div><div class="settings-item-value">v4.5.7 Supabase</div></div>
+                    <div class="settings-item"><div class="settings-item-label">App Version</div><div class="settings-item-value">v4.5.8 Supabase</div><!-- FIX-W0 2026-10-04 --></div>
                 </div>
             </div>
         </div>
@@ -1033,7 +1043,7 @@ v4.5.7 (S112, Paul): a barcode left on the red line is scanned ONCE.
 
     <script>
         // ============================================================================
-        // CCD MOBILE v4.5.7 — SUPABASE EDITION (TOOL_VERSION below)
+        // CCD MOBILE v4.5.8 — SUPABASE EDITION (TOOL_VERSION below)   // FIX-W0 2026-10-04
         // Pure display terminal. Desktop is the calculation engine.
         // Mobile reads stored values. Mobile never calculates prices.
         // ============================================================================
@@ -1056,7 +1066,7 @@ v4.5.7 (S112, Paul): a barcode left on the red line is scanned ONCE.
         // Crazy Chicks is a ROOM (Paul, S103). On screen it is "Crazy Chicks" or
         // "Chicks" — never "CC" (L-5).
         // ============================================================================
-        const TOOL_VERSION = '4.5.7';
+        const TOOL_VERSION = '4.5.8';   // FIX-W0 2026-10-04: version bump (registered as settings.tool_versions.mobile)
         const DEVICE_LABEL = 'Mobile-v' + TOOL_VERSION;
         const ROOM = 'crazychicks';
         const ROOM_LABEL = 'Crazy Chicks';
@@ -1078,6 +1088,103 @@ v4.5.7 (S112, Paul): a barcode left on the red line is scanned ONCE.
 
         function pi(v) { return parseInt(v) || 0; }
         function pf(v) { return parseFloat(v) || 0; }
+
+        // FIX-W1 2026-10-04: the business day is the phone's LOCAL date. toISOString() is UTC —
+        // after ~6 pm Mountain it already reads tomorrow, and the future-date guard would refuse it.
+        function localDate(d) {   // FIX-W1 2026-10-04
+            d = d || new Date();
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        }
+        // FIX-W1 2026-10-04: which tool wrote an existing sale — from the notes each writer stamps.
+        function saleSource(notes) {
+            const n = String(notes || '');
+            if (/^Mobile sale via/i.test(n)) return 'the phone';
+            if (/Manual sale via Inventory v2/i.test(n)) return 'Inventory V2';
+            if (/sync ?hub/i.test(n)) return 'Sync Hub';
+            return n ? `"${n.substring(0, 40)}"` : 'an unknown tool';
+        }
+        // FIX-W1 2026-10-04: DUPLICATE GUARD. Phone sales never carry an order_id, so an identical
+        // sale keyed twice (phone 09-23 ids 5076/5077, again in V2 10-02 ids 5108/5109) could not be
+        // told apart. Looks for ACTIVE rows, same channel + SKU + sale_date at the same unit price.
+        // Returns true to go ahead. DEFAULT IS CANCEL: the user must type ANOTHER.
+        async function duplicateSaleGuard(channel, sku, saleDate, salePrice) {
+            let rows;
+            try {
+                const { data, error } = await sbClient.from('sales_history')
+                    .select('id,created_at,notes,sale_price,qty_sold')
+                    .eq('sale_channel', channel).eq('sku', sku).eq('sale_date', saleDate).eq('status', 'active')
+                    .order('created_at', { ascending: true }).limit(20);
+                if (error) throw error;
+                rows = data || [];
+            } catch (e) {
+                return confirm(`Could not check whether this sale is already on record (${e.message}).\n\nRecord it anyway?`);
+            }
+            const same = rows.filter(r => Math.abs(pf(r.sale_price) - pf(salePrice)) < 0.005);
+            if (!same.length) return true;
+            const r = same[0];
+            const when = r.created_at ? new Date(r.created_at).toLocaleString() : 'an unknown time';
+            const ans = prompt(`This looks like a sale already recorded on ${when} from ${saleSource(r.notes)}` +
+                ` (sale #${r.id}: ${sku} · ${CH_LABEL[channel] || channel} · ${saleDate} · $${pf(r.sale_price).toFixed(2)} × ${pi(r.qty_sold)}` +
+                `${same.length > 1 ? ` — ${same.length} matching sales on record` : ''}).\n\n` +
+                `Record ANOTHER identical sale?\n\nType ANOTHER to record it. Anything else cancels and nothing is recorded.`, '');
+            return ans !== null && ans.trim().toUpperCase() === 'ANOTHER';
+        }
+        // FIX-W8 2026-10-04: mark a Crazy Chicks sale's tag(s) SOLD when the sale was NOT started
+        // from a scanned tag. Production constraints (verified 2026-10-04): status IN ('in_room',
+        // 'sold','pulled','void'); sale_id only when status='sold'; link_method IN ('pdf_import',
+        // 'phone_scan','manual'). So: sale_id + status 'sold' + status_changed_at in ONE update,
+        // link_method untouched, note appended — the same write scan-to-sell makes. One tag per
+        // unit, oldest printed_on first. Never throws — the sale is already recorded.
+        async function linkCcTagsToSale(saleId, itemId, sku, qty) {
+            try {
+                if (!saleId) return '⚠️ Crazy Chicks tag NOT linked (the new sale id did not come back)';
+                const cols = 'tag_no,printed_on,created_at,link_method,note';
+                const pick = q => q.eq('status', 'in_room').is('sale_id', null)
+                    .order('printed_on', { ascending: true, nullsFirst: false }).order('created_at', { ascending: true }).limit(50);
+                let { data: tags, error } = await pick(sbClient.from('crazychicks_tags').select(cols).eq('item_id', itemId));
+                if (error) return `⚠️ Crazy Chicks tag NOT linked (${error.message})`;
+                if ((!tags || !tags.length) && sku) {
+                    const r2 = await pick(sbClient.from('crazychicks_tags').select(cols).eq('sku', sku));
+                    if (r2.error) return `⚠️ Crazy Chicks tag NOT linked (${r2.error.message})`;
+                    tags = r2.data;
+                }
+                tags = tags || [];
+                if (!tags.length) return 'no tag found';
+                const take = tags.slice(0, Math.max(1, pi(qty)));
+                const linked = [];
+                for (const t of take) {
+                    const note = `${t.note ? t.note + ' · ' : ''}auto-linked to sale ${saleId} on ${localDate()} by Mobile ${TOOL_VERSION}`;
+                    const { data: up, error: uErr } = await sbClient.from('crazychicks_tags')
+                        .update({ sale_id: saleId, status: 'sold', status_changed_at: new Date().toISOString(), note })   // FIX-W8 2026-10-04 (constraint-checked)
+                        .eq('tag_no', t.tag_no).eq('status', 'in_room').is('sale_id', null).select('tag_no');
+                    if (uErr) return `⚠️ Crazy Chicks tag ${t.tag_no} NOT marked sold (${uErr.message})` + (linked.length ? ` · tag ${linked.join(', ')} marked sold` : '');
+                    if (up && up.length === 1) linked.push(t.tag_no + (t.printed_on ? ` (printed ${t.printed_on})` : ''));
+                }
+                if (!linked.length) return '⚠️ Crazy Chicks tag NOT marked sold (it was no longer in the room)';
+                return `tag ${linked.join(', ')} marked sold` +
+                    (tags.length > take.length ? ` — ${tags.length} in-room tags matched; the oldest printed was used` : '');
+            } catch (e) { return `⚠️ Crazy Chicks tag NOT linked (${e.message})`; }
+        }
+        // FIX-W8 2026-10-04: a reversed sale puts its tag(s) back in the room — sale_id NULL, status
+        // 'in_room', status_changed_at now, note appended — in ONE update (a NULL sale_id is allowed
+        // with any status; a sale_id is not allowed without 'sold'). Never throws.
+        async function unlinkCcTagsFromSale(saleId) {
+            try {
+                if (!saleId) return '';
+                const { data: tags, error } = await sbClient.from('crazychicks_tags').select('tag_no,note').eq('sale_id', saleId);
+                if (error) return ` · ⚠️ tag NOT put back in the room (${error.message})`;
+                if (!tags || !tags.length) return '';
+                const back = [], bad = [];
+                for (const t of tags) {
+                    const note = `${t.note ? t.note + ' · ' : ''}sale ${saleId} reversed on ${localDate()} by Mobile ${TOOL_VERSION} — back in the room`;
+                    const { error: uErr } = await sbClient.from('crazychicks_tags')
+                        .update({ sale_id: null, status: 'in_room', status_changed_at: new Date().toISOString(), note })
+                        .eq('tag_no', t.tag_no).eq('sale_id', saleId);
+                    (uErr ? bad : back).push(t.tag_no + (uErr ? ` (${uErr.message})` : ''));
+                }
+                return (back.length ? ` · tag ${back.join(', ')} back in the room` : '') + (bad.length ? ` · ⚠️ tag NOT put back: ${bad.join(', ')}` : '');
+            } catch (e) { return ` · ⚠️ tag NOT put back in the room (${e.message})`; }
+        }
 
         // A Set or bundle: item_role 'set'/'bundle' (the family engine) or the legacy
         // is_bundle flag. Works on a cached item (itemRole/isBundle) or a DB row.
@@ -2138,7 +2245,8 @@ async function registerToolVersion(client, toolKey, toolVersion) {
             document.getElementById('saleItemName').textContent = currentItem.productName || 'Unnamed';
             document.getElementById('saleItemSku').textContent  = 'SKU: ' + (currentItem.sku || 'N/A');
             document.getElementById('saleQty').value   = 1;
-            document.getElementById('saleDate').value  = new Date().toISOString().split('T')[0];
+            document.getElementById('saleDate').value  = localDate();   // FIX-W1 2026-10-04: local, not UTC
+            document.getElementById('saleDate').max    = localDate();   // FIX-W1 2026-10-04: no future date in the picker (confirmSale still checks)
             document.getElementById('saleNotes').value = '';
 
             const ch = currentItem.channels || {};
@@ -2172,12 +2280,16 @@ async function registerToolVersion(client, toolKey, toolVersion) {
             const channel   = document.getElementById('saleChannel').value;
             const qtySold   = pi(document.getElementById('saleQty').value);
             const salePrice = pf(document.getElementById('salePrice').value);
-            const saleDate  = document.getElementById('saleDate').value || new Date().toISOString().split('T')[0];
+            const saleDate  = document.getElementById('saleDate').value || localDate();   // FIX-W1 2026-10-04: local, not UTC
             const saleNotes = (document.getElementById('saleNotes').value || '').trim();
 
             if (!SALE_CHANNELS.includes(channel)) { showToast('Choose a channel', 'error'); return; }
             if (qtySold <= 0)  { showToast('Quantity must be at least 1', 'error'); return; }
             if (salePrice <= 0) { showToast('Sale price required', 'error'); return; }
+            // FIX-W1 2026-10-04: FUTURE-DATE GUARD. Two Crazy Chicks sales sold in September were dated
+            // 10-25 and 10-30. A sale cannot be later than today (the phone's local date).
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(saleDate)) { showToast(`Sale date "${saleDate}" is not a date. Nothing was recorded.`, 'error'); return; }
+            if (saleDate > localDate()) { showToast(`Sale date ${saleDate} is after today (${localDate()}). A sale cannot be dated in the future — check the date. Nothing was recorded.`, 'error'); return; }
 
             let row;
             try { row = await fetchItemRow(currentItem.id); }
@@ -2209,6 +2321,8 @@ async function registerToolVersion(client, toolKey, toolVersion) {
                 if (qtyUpdates[c] !== undefined && qtyUpdates[c] !== pi(row[c])) moves.push(`${CH_LABEL[ch]} ${pi(row[c])}→${qtyUpdates[c]}`);
             }
             if (!confirm(`Sell ${qtySold} × ${sku} in ${CH_LABEL[channel]} for $${(salePrice * qtySold).toFixed(2)}?\n\n${moves.join('\n')}`)) return;
+            // FIX-W1 2026-10-04: DUPLICATE GUARD — a phone sale never has an order_id. Before anything is written.
+            if (!(await duplicateSaleGuard(channel, sku, saleDate, salePrice))) { showToast('Cancelled — an identical sale is already on record. Nothing was recorded.', 'error'); return; }
 
             // ── Fees: calculate_sale_profit, exactly as V2 L8596-8623 ──
             const wholesale = pf(row.wholesale_price), ibPct = pf(row.ib_shipping), tariffPct = pf(row.tariff);
@@ -2264,13 +2378,20 @@ async function registerToolVersion(client, toolKey, toolVersion) {
                         .update({ status: 'sold', sale_id: saleId, status_changed_at: new Date().toISOString() })
                         .eq('tag_no', pt.tag_no).eq('status', 'in_room').select('tag_no');
                     tagNote = (!tgErr && tg && tg.length === 1) ? ` · tag ${pt.tag_no} marked sold` : ` · ⚠️ tag ${pt.tag_no} NOT marked sold${tgErr ? ' (' + tgErr.message + ')' : ' (it was no longer in the room)'}`;
+                    // FIX-W8 2026-10-04: 'sold' is a valid status (constraint verified) — a failure is a real
+                    // error and is shown on its own, not papered over with a second write.
+                    if (tgErr) showToast(`Tag ${pt.tag_no} NOT marked sold: ${tgErr.message}`, 'error');
                 }
+            } else if (channel === ROOM) {
+                // FIX-W8 2026-10-04: a Crazy Chicks sale NOT started from a scanned tag (typed, or from
+                // the room checklist) marks the item's oldest in-room tag(s) sold against the new sale.
+                tagNote = ' · ' + await linkCcTagsToSale(saleIns && saleIns[0] ? saleIns[0].id : null, row.id, sku, qtySold);
             }
 
             closeSaleModal();
             await refreshItem(row.id);
             if (document.getElementById('treasureMartModal')?.classList.contains('active')) showRoomAudit(true);
-            const bad = res.unknown || res.error || res.unpushable.length || !fee || tagNote.includes('⚠️');
+            const bad = res.unknown || res.error || res.unpushable.length || !fee || tagNote.includes('⚠️') || tagNote.includes('no tag found');   // FIX-W8 2026-10-04: + no tag
             showResult(`Sold ${qtySold} × ${sku} in ${CH_LABEL[channel]} for $${totalRevenue.toFixed(2)}` + (fee ? '' : ' · ⚠️ fees NOT calculated') + ` · ${queueOutcomeText(res)}` + tagNote, bad ? 'warning' : 'success');
         }
 
@@ -2522,7 +2643,8 @@ async function registerToolVersion(client, toolKey, toolVersion) {
             document.getElementById('saleItemName').textContent = item.productName || 'Unnamed';
             document.getElementById('saleItemSku').textContent  = 'SKU: ' + (item.sku || 'N/A');
             document.getElementById('saleQty').value   = 1;
-            document.getElementById('saleDate').value  = new Date().toISOString().split('T')[0];
+            document.getElementById('saleDate').value  = localDate();   // FIX-W1 2026-10-04: local, not UTC
+            document.getElementById('saleDate').max    = localDate();   // FIX-W1 2026-10-04: no future date in the picker (confirmSale still checks)
             document.getElementById('saleNotes').value = '';
             document.getElementById('saleChannel').value = 'crazychicks';
             updateSalePrice();
@@ -3210,11 +3332,12 @@ async function registerToolVersion(client, toolKey, toolVersion) {
                 const after = await chqRead(row.id);
                 const res = await queueChannelQtyDeltas(row, after, 'sale_reversal');
                 logActivity('SALE', 'SALE_REVERSED', channel, `Sale reversed on the phone: ${row.sku} x${qty} on ${channel} — qty restored (${pi(row.qty)} → ${upd.qty})`, { sale_id: sale.id, qty, channel, new_warehouse_qty: upd.qty }, row.sku);
+                const revTagMsg = await unlinkCcTagsFromSale(sale.id);   // FIX-W8 2026-10-04: its tag goes back to the room
 
                 sale.status = 'reversed'; sale.reversed_at = new Date().toISOString();
                 renderSalesHistory();
                 await refreshItem(row.id);
-                showResult(`Sale reversed: ${row.sku} x${qty} · ${queueOutcomeText(res)}`, (res.unknown || res.error) ? 'warning' : 'success');
+                showResult(`Sale reversed: ${row.sku} x${qty} · ${queueOutcomeText(res)}${revTagMsg}`, (res.unknown || res.error || revTagMsg.includes('⚠️')) ? 'warning' : 'success');   // FIX-W8 2026-10-04: + tag outcome
             } catch (e) {
                 showToast('Reverse failed: ' + e.message, 'error');
             }
