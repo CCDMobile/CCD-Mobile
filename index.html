@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
 ================================================================================
-CCD MOBILE INVENTORY MODULE v4.5.8-Supabase
+CCD MOBILE INVENTORY MODULE v4.5.9-Supabase
 FIX-W0 2026-10-04: DEPLOY THIS FILE AS index.html (the PWA, manifest and sw.js load ./index.html).
 ================================================================================
 Pure display terminal backed by Supabase. Desktop CCD-INVENTORY-SYSTEM.html
@@ -77,6 +77,13 @@ v4.5.7 (S112, Paul): a barcode left on the red line is scanned ONCE.
       line for 2 seconds. The Tera scanner is unchanged (each trigger
       pull is a scan).
       Build notes: claude\CCD-S112-Build-Notes-Mobile-v4_5_7.md
+v4.5.9 (2026-10-06, S113, Paul): the Crazy Chicks room no longer lowers
+      Etsy, Wix or Wayfair (the online cap is warehouse − TreasureMarts).
+      A save, room add or room set that leaves online + room + hold-back
+      above the warehouse asks first (Continue / Cancel) and Continue is
+      recorded. A save or reversal that puts Etsy stock back on a
+      deactivated Etsy listing asks "Reactivate it on Etsy now?".
+      Build notes: claude\CCD-S113-Build-Notes-Mobile-v4_5_9.md
 v4.5.8 (2026-10-04, FIX-W1/W8): a sale dated after today is refused,
       and the date defaults to the phone's LOCAL date (it was UTC, i.e.
       tomorrow after ~6 pm Mountain). A sale that matches an active sale
@@ -755,7 +762,7 @@ v4.5.8 (2026-10-04, FIX-W1/W8): a sale dated after today is refused,
                 </div>
                 <div class="settings-section">
                     <div class="settings-section-title">Version</div>
-                    <div class="settings-item"><div class="settings-item-label">App Version</div><div class="settings-item-value">v4.5.8 Supabase</div><!-- FIX-W0 2026-10-04 --></div>
+                    <div class="settings-item"><div class="settings-item-label">App Version</div><div class="settings-item-value">v4.5.9 Supabase</div><!-- FIX-W0 2026-10-04 --></div>
                 </div>
             </div>
         </div>
@@ -1043,7 +1050,7 @@ v4.5.8 (2026-10-04, FIX-W1/W8): a sale dated after today is refused,
 
     <script>
         // ============================================================================
-        // CCD MOBILE v4.5.8 — SUPABASE EDITION (TOOL_VERSION below)   // FIX-W0 2026-10-04
+        // CCD MOBILE v4.5.9 — SUPABASE EDITION (TOOL_VERSION below)   // FIX-W0 2026-10-04
         // Pure display terminal. Desktop is the calculation engine.
         // Mobile reads stored values. Mobile never calculates prices.
         // ============================================================================
@@ -1066,7 +1073,7 @@ v4.5.8 (2026-10-04, FIX-W1/W8): a sale dated after today is refused,
         // Crazy Chicks is a ROOM (Paul, S103). On screen it is "Crazy Chicks" or
         // "Chicks" — never "CC" (L-5).
         // ============================================================================
-        const TOOL_VERSION = '4.5.8';   // FIX-W0 2026-10-04: version bump (registered as settings.tool_versions.mobile)
+        const TOOL_VERSION = '4.5.9';   // S113   // FIX-W0 2026-10-04: version bump (registered as settings.tool_versions.mobile)
         const DEVICE_LABEL = 'Mobile-v' + TOOL_VERSION;
         const ROOM = 'crazychicks';
         const ROOM_LABEL = 'Crazy Chicks';
@@ -1074,7 +1081,7 @@ v4.5.8 (2026-10-04, FIX-W1/W8): a sale dated after today is refused,
         const ONLINE_CHANNELS = ['etsy', 'wix', 'wayfair'];
         const CH_QTY_COL = { etsy: 'etsy_qty', wix: 'wix_qty', wayfair: 'wayfair_qty', treasuremarts: 'treasuremarts_qty', crazychicks: 'crazychicks_qty' };
         const CH_LABEL = { etsy: 'Etsy', wix: 'Wix', wayfair: 'Wayfair', treasuremarts: 'TreasureMarts', crazychicks: ROOM_LABEL };
-        const ITEM_COLS = 'id,sku,product_name,brand_name,comments,item_role,is_bundle,is_active,qty,etsy_qty,wix_qty,wayfair_qty,treasuremarts_qty,crazychicks_qty,etsy_listing_id,etsy_variant_id,wix_product_id,wix_variant_id,wayfair_sku,wholesale_price,ib_shipping,tariff,ob_shipping,etsy_price,wix_price,wayfair_price,crazychicks_price';
+        const ITEM_COLS = 'id,sku,product_name,brand_name,comments,item_role,is_bundle,is_active,qty,etsy_qty,wix_qty,wayfair_qty,treasuremarts_qty,crazychicks_qty,etsy_listing_id,etsy_variant_id,wix_product_id,wix_variant_id,wayfair_sku,wholesale_price,ib_shipping,tariff,ob_shipping,etsy_price,wix_price,wayfair_price,crazychicks_price,hold_back,etsy_state';   // v4.5.9: + hold_back, etsy_state
         // v4.4.2: the editable channel prices. push = the Etsy/Wix listing price can be sent
         // (edge buildPricePayload: Etsy updateListing, Wix updateProduct; Wayfair not supported).
         const PRICE_FIELDS = [
@@ -1228,11 +1235,49 @@ v4.5.8 (2026-10-04, FIX-W1/W8): a sale dated after today is refused,
         // The online cap after a change: every online channel <= warehouse − TreasureMarts − Crazy Chicks
         // (V2 saveItem L7934, confirmSell L8733, recordWriteoff L9072). Caps AT available, never
         // raises TO it — Etsy/Wix are kept low on purpose (S92 scarcity rule).
+        // v4.5.9 (S113, Paul 2026-10-06): THE CRAZY CHICKS COMPLIANCE RULE, as V2 2.9.90 —
+        // max(Etsy, Wix, Wayfair) + room + hold-back <= warehouse. A warning only; Continue is recorded.
+        function compOver(r) {
+            if (!r) return 0;
+            const role = r.item_role || 'single';
+            if (role === 'set' || role === 'bundle' || role === 'parent' || r.is_bundle) return 0;
+            return Math.max(pi(r.etsy_qty), pi(r.wix_qty), pi(r.wayfair_qty)) + pi(r.crazychicks_qty) + pi(r.hold_back) - pi(r.qty);
+        }
+        function compText(sku, r, roomUp) {
+            const on = Math.max(pi(r.etsy_qty), pi(r.wix_qty), pi(r.wayfair_qty)), hb = pi(r.hold_back);
+            return `${roomUp ? 'Adding this to Crazy Chicks puts' : 'This puts'} ${sku} out of compliance: online ${on} + room ${pi(r.crazychicks_qty)}${hb ? ` + hold-back ${hb}` : ''} > warehouse ${pi(r.qty)}.`;
+        }
+        async function compRecord(itemId, sku, r, source) {
+            try {
+                const { error } = await sbClient.from('compliance_overrides').insert({ item_id: itemId, sku, rule: 'cc_online_pool', qty: pi(r.qty),
+                    max_online: Math.max(pi(r.etsy_qty), pi(r.wix_qty), pi(r.wayfair_qty)), crazychicks_qty: pi(r.crazychicks_qty), hold_back: pi(r.hold_back), source, by_name: 'Phone' });
+                logActivity('INVENTORY', 'CC_COMPLIANCE_OVERRIDE', 'crazychicks', `${sku}: saved out of compliance (${source}) on the phone`,
+                    { item_id: itemId, source, qty: pi(r.qty), etsy_qty: pi(r.etsy_qty), wix_qty: pi(r.wix_qty), wayfair_qty: pi(r.wayfair_qty), crazychicks_qty: pi(r.crazychicks_qty), hold_back: pi(r.hold_back), recorded: !error }, sku);
+            } catch (e) { console.warn('[Compliance]', e.message); }
+        }
+        // v4.5.9 (Paul 22:17): ask before an Etsy listing V2 knows is off gets reactivated by a restock. Never throws.
+        async function askEtsyReactivate(before, after) {
+            try {
+                if (!before || !after || !after.etsy_listing_id) return false;
+                const b = pi(before.etsy_qty), a = pi(after.etsy_qty);
+                if (a <= 0 || a === b) return false;
+                let st = null;
+                const { data } = await sbClient.from('items').select('etsy_state').eq('id', after.id).limit(1);
+                if (data && data[0]) st = data[0].etsy_state || null;
+                const off = st === 'inactive' || st === 'sold_out';
+                if (!off && !(st === null && b === 0)) return false;
+                const ok = confirm(`${after.sku}'s Etsy listing is ${off ? (st === 'sold_out' ? 'sold out' : 'deactivated') : 'probably off (its state has not been seen and Etsy stood at 0)'}.\n\nReactivate it on Etsy now, with ${a} available?\n\nOK = Reactivate on Etsy\nCancel = Keep it off (the quantity is still sent)`);
+                logActivity('CHANNEL', ok ? 'ETSY_REACTIVATE_CONFIRMED' : 'ETSY_REACTIVATE_DECLINED', 'etsy', `${after.sku}: Etsy ${b}→${a} — ${ok ? 'reactivate the listing' : 'keep the listing off'} (state ${st || 'not seen'}, phone)`,
+                    { item_id: after.id, etsy_state: st, etsy_before: b, etsy_after: a }, after.sku);
+                return ok;
+            } catch (e) { console.warn('[Etsy reactivate]', e.message); return false; }
+        }
+
         function capOnline(updates, row) {
             const wh = updates.qty !== undefined ? pi(updates.qty) : pi(row.qty);
             const tm = updates.treasuremarts_qty !== undefined ? pi(updates.treasuremarts_qty) : pi(row.treasuremarts_qty);
             const cc = updates.crazychicks_qty !== undefined ? pi(updates.crazychicks_qty) : pi(row.crazychicks_qty);
-            const avail = Math.max(0, wh - tm - cc);
+            const avail = Math.max(0, wh - tm) + cc * 0;   // v4.5.9 (S113, Paul): the room no longer lowers online
             const capped = [];
             for (const ch of ONLINE_CHANNELS) {
                 const col = CH_QTY_COL[ch];
@@ -1283,9 +1328,10 @@ async function chqRead(itemId) {
 // bulk push already ships (L12594-12602). It is NOT re-derived here: operation
 // must be 'update' or sqStamp() refuses to stamp it, and an unstamped row is
 // Sync-Hub-only because NULL = ANY(...) is NULL, not true.
-function chqRowFor(ch, row, quantity, trigger) {
+function chqRowFor(ch, row, quantity, trigger, opts) {
   const fields = { sku: row.sku, quantity: pi(quantity), fieldTypes: ['quantity'], trigger: trigger };
-  if (ch.key === 'etsy') { fields.listingId = row.etsy_listing_id; if (row.etsy_variant_id) fields.etsyVariantId = row.etsy_variant_id; }
+  if (ch.key === 'etsy') { fields.listingId = row.etsy_listing_id; if (row.etsy_variant_id) fields.etsyVariantId = row.etsy_variant_id;
+    if (opts && opts.etsyReactivate && pi(quantity) > 0) { fields.reactivate = true; fields.reactivate_by = 'Phone'; } }   // v4.5.9 (= V2 2.9.90)
   if (ch.key === 'wix') { fields.productId = row.wix_product_id; if (row.wix_variant_id) fields.wixVariantId = row.wix_variant_id; }
   if (ch.key === 'wayfair') { fields.wayfairSku = row.wayfair_sku; }
   return { item_id: row.id, channel: ch.key, operation: 'update', fields: fields, status: 'pending', created_at: new Date().toISOString() };
@@ -1306,7 +1352,7 @@ function chqText(r) {
 // throwing would turn a queue failure into a save that looks failed while
 // having succeeded — which is the v2.9.49 write-off bug that produced duplicate
 // write_offs rows. A failure here is reported, loudly, and returned.
-async function queueChannelQtyDeltas(before, after, trigger) {
+async function queueChannelQtyDeltas(before, after, trigger, opts) {
   const out = { queued: [], unpushable: [], booth: [], unknown: false, error: null };
   if (!before || !after) {
     out.unknown = true;
@@ -1320,7 +1366,7 @@ async function queueChannelQtyDeltas(before, after, trigger) {
     if (b === a) continue;
     detail[ch.key] = { before: b, after: a };
     if (chqHasId(ch, after)) {
-      rows.push(chqRowFor(ch, after, a, trigger));
+      rows.push(chqRowFor(ch, after, a, trigger, opts));
       out.queued.push(`${ch.label} ${b}→${a}`);
     } else {
       out.unpushable.push(`${ch.label} ${b}→${a}`);
@@ -1353,7 +1399,7 @@ async function queueChannelQtyDeltas(before, after, trigger) {
   // trace. This is that shape, applied to the save path.
   logActivity('INVENTORY','CHANNEL_QTY_DELTA',null,
     `Channel qty moved on ${after.sku}: ${chqText(out)}`,
-    { trigger: trigger, changes: detail, queued: out.queued, not_pushed_no_channel_id: out.unpushable, booths: out.booth, queue_error: out.error, warehouse_after: pi(after.qty) },
+    { trigger: trigger, etsy_reactivate: !!(opts && opts.etsyReactivate), changes: detail, queued: out.queued, not_pushed_no_channel_id: out.unpushable, booths: out.booth, queue_error: out.error, warehouse_after: pi(after.qty) },
     after.sku);
   return out;
 }
@@ -2096,7 +2142,7 @@ async function registerToolVersion(client, toolKey, toolVersion) {
             const item = currentItem;
             const sku = item.sku;
 
-            let before, capNote = [];
+            let before, capNote = [], compAfter = null;   // v4.5.9
             try { before = await fetchItemRow(item.id); }
             catch (e) { showResult('⚠️ ' + e.message + ' — nothing was saved.', 'error'); return; }
 
@@ -2127,7 +2173,7 @@ async function registerToolVersion(client, toolKey, toolVersion) {
                 // V2 saveItem L7954: an online channel above available is CAPPED, not refused, so a
                 // channel that was already over (and that Mary did not touch) never blocks her save.
                 // A channel she TYPED above available is capped only after she agrees.
-                const avail = Math.max(0, want.qty - tm - want.crazychicks_qty);
+                const avail = Math.max(0, want.qty - tm);   // v4.5.9 (S113): the room no longer lowers online
                 const typedOver = [], quietCaps = [];
                 for (const ch of ONLINE_CHANNELS) {
                     const col = CH_QTY_COL[ch];
@@ -2136,10 +2182,16 @@ async function registerToolVersion(client, toolKey, toolVersion) {
                         want[col] = avail;
                     }
                 }
-                if (typedOver.length && !confirm(`Only ${avail} can be offered online (warehouse ${want.qty} − ${ROOM_LABEL} ${want.crazychicks_qty}` + (tm ? ` − TreasureMarts ${tm}` : '') + `).\n\nSave with ${typedOver.join(', ')}?`)) return;
+                if (typedOver.length && !confirm(`Only ${avail} can be offered online (warehouse ${want.qty}` + (tm ? ` − TreasureMarts ${tm}` : '') + `).\n\nSave with ${typedOver.join(', ')}?`)) return;
+                // v4.5.9 (S113, Paul): WARN when online + room + hold-back would exceed the warehouse (or a breach gets worse)
+                const compA = Object.assign({}, before, want), oA = compOver(compA), oB = compOver(before);
+                if (oA > 0 && oA > oB) {
+                    if (!confirm(compText(sku, compA, want.crazychicks_qty > pi(before.crazychicks_qty)) + '\n\nOnline listings will NOT change.\n\nOK = Continue (save it)\nCancel = nothing saved')) return;
+                    compAfter = compA;
+                }
                 capNote = typedOver.concat(quietCaps);
                 // V2 REACTIVATION GUARD (saveItem L7981): Etsy 0 → >0 re-lists the item.
-                if (pi(before.etsy_qty) === 0 && want.etsy_qty > 0 && before.etsy_listing_id) {
+                if (false && pi(before.etsy_qty) === 0 && want.etsy_qty > 0 && before.etsy_listing_id) {   // v4.5.9: replaced by askEtsyReactivate after the write
                     if (!confirm(`⚠️ REACTIVATION\n\n${sku} had 0 on Etsy and you are setting it to ${want.etsy_qty}.\nThis will make the Etsy listing live again.\n\nContinue? (Cancel keeps Etsy at 0)`)) {
                         want.etsy_qty = 0;
                         document.getElementById('editEtsy').value = 0;
@@ -2169,8 +2221,10 @@ async function registerToolVersion(client, toolKey, toolVersion) {
                 showResult('⚠️ Not saved: ' + (error.message.includes('CCD-COMPOSITE') ? compositeRefusal(sku) : error.message), 'error');
                 return;
             }
+            if (compAfter) await compRecord(item.id, sku, compAfter, 'mobile_save');   // v4.5.9
             const after = await chqRead(item.id);
-            const res = await queueChannelQtyDeltas(before, after, 'mobile_save');
+            const react = await askEtsyReactivate(before, after);   // v4.5.9 (Paul 22:17)
+            const res = await queueChannelQtyDeltas(before, after, 'mobile_save', { etsyReactivate: react });
             logActivity('INVENTORY', 'ITEM_SAVED', null, `Saved ${sku} on the phone: ${Object.keys(updates).join(', ')}`, { changes: updates }, sku);
             const priceText = priceMoves.map(m => `${m.p.label} ${m.old != null ? '$' + m.old.toFixed(2) : '—'} → $${m.v.toFixed(2)}`).join(', ');
             if (priceMoves.length) logActivity('INVENTORY', 'PRICE_CHANGED', null, `Price changed on ${sku} on the phone: ${priceText}`,
@@ -3330,7 +3384,8 @@ async function registerToolVersion(client, toolKey, toolVersion) {
                 const { error: qtyErr } = await sbClient.from('items').update(upd).eq('id', row.id);
                 if (qtyErr) throw new Error('Qty restore failed (the sale IS marked reversed): ' + qtyErr.message);
                 const after = await chqRead(row.id);
-                const res = await queueChannelQtyDeltas(row, after, 'sale_reversal');
+                const react = await askEtsyReactivate(row, after);   // v4.5.9
+                const res = await queueChannelQtyDeltas(row, after, 'sale_reversal', { etsyReactivate: react });
                 logActivity('SALE', 'SALE_REVERSED', channel, `Sale reversed on the phone: ${row.sku} x${qty} on ${channel} — qty restored (${pi(row.qty)} → ${upd.qty})`, { sale_id: sale.id, qty, channel, new_warehouse_qty: upd.qty }, row.sku);
                 const revTagMsg = await unlinkCcTagsFromSale(sale.id);   // FIX-W8 2026-10-04: its tag goes back to the room
 
@@ -4174,12 +4229,14 @@ async function registerToolVersion(client, toolKey, toolVersion) {
                 if (tm + cc + 1 > wh) { showToast(`${row.sku}: the warehouse holds ${wh}, so the room cannot hold ${cc + 1}${tm ? ' plus ' + tm + ' at TreasureMarts' : ''}. Receive the stock in V2 first. Nothing was changed.`, 'error'); return; }
                 const updates = { crazychicks_qty: cc + 1 };
                 const capped = capOnline(updates, row);
-                if (!confirm(`Put 1 × ${row.sku} in the Crazy Chicks room?\n\nCrazy Chicks room ${cc}→${cc + 1}` + (capped.length ? '\nOnline capped: ' + capped.join(', ') : '') + '\n\n(The warehouse number does not change — it already counts it.)')) return;
+                const compA = Object.assign({}, row, updates), comp = compOver(compA) > 0 && compOver(compA) > compOver(row);   // v4.5.9
+                if (!confirm(`Put 1 × ${row.sku} in the Crazy Chicks room?\n\nCrazy Chicks room ${cc}→${cc + 1}` + (capped.length ? '\nOnline capped: ' + capped.join(', ') : '') + (comp ? '\n\n⚠ ' + compText(row.sku, compA, true) + ' Online listings will NOT change.' : '') + '\n\n(The warehouse number does not change — it already counts it.)')) return;
                 // Old value in the WHERE: a second tap, or a change made elsewhere meanwhile, writes nothing.
                 const { data, error } = await sbClient.from('items').update(updates).eq('id', row.id).eq('crazychicks_qty', cc).select('id');
                 if (error) { showToast('Not changed: ' + error.message, 'error'); return; }
                 if (!data || data.length !== 1) { showToast(`${row.sku} changed meanwhile — nothing was written. Scan the tag again.`, 'error'); return; }
                 const after = await chqRead(row.id);
+                if (comp) await compRecord(row.id, row.sku, compA, 'mobile_room_add');   // v4.5.9
                 const res = await queueChannelQtyDeltas(row, after, 'mobile_room_add');
                 logActivity('INVENTORY', 'ROOM_ADD', ROOM, `${row.sku}: Crazy Chicks room ${cc}→${cc + 1} (tag scan, phone)`, { item_id: row.id, room_before: cc, room_after: cc + 1, capped }, row.sku);
                 await refreshItem(row.id);
@@ -4326,11 +4383,13 @@ async function registerToolVersion(client, toolKey, toolVersion) {
                 if (tm + to > wh) { showToast(`${row.sku}: the warehouse holds ${wh}, so the room cannot hold ${to}${tm ? ' plus ' + tm + ' at TreasureMarts' : ''}. Receive the stock in V2 first. Nothing was changed.`, 'error'); return; }
                 const updates = { crazychicks_qty: to };
                 const capped = capOnline(updates, row);
-                if (!confirm(`Set the Crazy Chicks room for ${row.sku} to ${to}?\n\nCrazy Chicks room ${cc}→${to}` + (capped.length ? '\nOnline capped: ' + capped.join(', ') : '') + '\n\n(The warehouse number does not change — it already counts them.)')) return;
+                const compA = Object.assign({}, row, updates), comp = compOver(compA) > 0 && compOver(compA) > compOver(row);   // v4.5.9
+                if (!confirm(`Set the Crazy Chicks room for ${row.sku} to ${to}?\n\nCrazy Chicks room ${cc}→${to}` + (capped.length ? '\nOnline capped: ' + capped.join(', ') : '') + (comp ? '\n\n⚠ ' + compText(row.sku, compA, true) + ' Online listings will NOT change.' : '') + '\n\n(The warehouse number does not change — it already counts them.)')) return;
                 const { data, error } = await sbClient.from('items').update(updates).eq('id', row.id).eq('crazychicks_qty', cc).select('id');
                 if (error) { showToast('Not changed: ' + error.message, 'error'); return; }
                 if (!data || data.length !== 1) { showToast(`${row.sku} changed meanwhile — nothing was written.`, 'error'); return; }
                 const after = await chqRead(row.id);
+                if (comp) await compRecord(row.id, row.sku, compA, 'mobile_room_set');   // v4.5.9
                 const res = await queueChannelQtyDeltas(row, after, 'mobile_room_set');
                 logActivity('INVENTORY', 'ROOM_SET', ROOM, `${row.sku}: Crazy Chicks room ${cc}→${to} (scan audit, phone)`, { item_id: row.id, room_before: cc, room_after: to, capped }, row.sku);
                 await refreshItem(row.id);
