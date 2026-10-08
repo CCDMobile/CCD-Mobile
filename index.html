@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
 ================================================================================
-CCD MOBILE INVENTORY MODULE v4.5.9-Supabase
+CCD MOBILE INVENTORY MODULE v4.5.10-Supabase
 FIX-W0 2026-10-04: DEPLOY THIS FILE AS index.html (the PWA, manifest and sw.js load ./index.html).
 ================================================================================
 Pure display terminal backed by Supabase. Desktop CCD-INVENTORY-SYSTEM.html
@@ -77,6 +77,9 @@ v4.5.7 (S112, Paul): a barcode left on the red line is scanned ONCE.
       line for 2 seconds. The Tera scanner is unchanged (each trigger
       pull is a scan).
       Build notes: claude\CCD-S112-Build-Notes-Mobile-v4_5_7.md
+v4.5.10 (2026-10-07, S113): a restock from Etsy 0 asks about reactivating
+      even when the listing was last seen active (its last unit may have
+      sold on Etsy). Build notes: claude\CCD-S113-Build-Notes-v2_9_93.md
 v4.5.9 (2026-10-06, S113, Paul): the Crazy Chicks room no longer lowers
       Etsy, Wix or Wayfair (the online cap is warehouse − TreasureMarts).
       A save, room add or room set that leaves online + room + hold-back
@@ -762,7 +765,7 @@ v4.5.8 (2026-10-04, FIX-W1/W8): a sale dated after today is refused,
                 </div>
                 <div class="settings-section">
                     <div class="settings-section-title">Version</div>
-                    <div class="settings-item"><div class="settings-item-label">App Version</div><div class="settings-item-value">v4.5.9 Supabase</div><!-- FIX-W0 2026-10-04 --></div>
+                    <div class="settings-item"><div class="settings-item-label">App Version</div><div class="settings-item-value">v4.5.10 Supabase</div><!-- FIX-W0 2026-10-04 --></div>
                 </div>
             </div>
         </div>
@@ -1050,7 +1053,7 @@ v4.5.8 (2026-10-04, FIX-W1/W8): a sale dated after today is refused,
 
     <script>
         // ============================================================================
-        // CCD MOBILE v4.5.9 — SUPABASE EDITION (TOOL_VERSION below)   // FIX-W0 2026-10-04
+        // CCD MOBILE v4.5.10 — SUPABASE EDITION (TOOL_VERSION below)   // FIX-W0 2026-10-04
         // Pure display terminal. Desktop is the calculation engine.
         // Mobile reads stored values. Mobile never calculates prices.
         // ============================================================================
@@ -1073,7 +1076,7 @@ v4.5.8 (2026-10-04, FIX-W1/W8): a sale dated after today is refused,
         // Crazy Chicks is a ROOM (Paul, S103). On screen it is "Crazy Chicks" or
         // "Chicks" — never "CC" (L-5).
         // ============================================================================
-        const TOOL_VERSION = '4.5.9';   // S113   // FIX-W0 2026-10-04: version bump (registered as settings.tool_versions.mobile)
+        const TOOL_VERSION = '4.5.10';   // S113   // FIX-W0 2026-10-04: version bump (registered as settings.tool_versions.mobile)
         const DEVICE_LABEL = 'Mobile-v' + TOOL_VERSION;
         const ROOM = 'crazychicks';
         const ROOM_LABEL = 'Crazy Chicks';
@@ -1265,8 +1268,8 @@ v4.5.8 (2026-10-04, FIX-W1/W8): a sale dated after today is refused,
                 const { data } = await sbClient.from('items').select('etsy_state').eq('id', after.id).limit(1);
                 if (data && data[0]) st = data[0].etsy_state || null;
                 const off = st === 'inactive' || st === 'sold_out';
-                if (!off && !(st === null && b === 0)) return false;
-                const ok = confirm(`${after.sku}'s Etsy listing is ${off ? (st === 'sold_out' ? 'sold out' : 'deactivated') : 'probably off (its state has not been seen and Etsy stood at 0)'}.\n\nReactivate it on Etsy now, with ${a} available?\n\nOK = Reactivate on Etsy\nCancel = Keep it off (the quantity is still sent)`);
+                if (!off && !((st === null || st === 'active') && b === 0)) return false;   // v4.5.10: "active" + Etsy 0 is out of date
+                const ok = confirm(`${after.sku}'s Etsy listing is ${off ? (st === 'sold_out' ? 'sold out' : 'deactivated') : 'probably off (Etsy stood at 0' + (st === 'active' ? ' — it was last seen active, but its last unit may have sold on Etsy' : ' and its state has not been seen') + ')'}.\n\nReactivate it on Etsy now, with ${a} available?\n\nOK = Reactivate on Etsy\nCancel = Keep it off (the quantity is still sent)`);
                 logActivity('CHANNEL', ok ? 'ETSY_REACTIVATE_CONFIRMED' : 'ETSY_REACTIVATE_DECLINED', 'etsy', `${after.sku}: Etsy ${b}→${a} — ${ok ? 'reactivate the listing' : 'keep the listing off'} (state ${st || 'not seen'}, phone)`,
                     { item_id: after.id, etsy_state: st, etsy_before: b, etsy_after: a }, after.sku);
                 return ok;
