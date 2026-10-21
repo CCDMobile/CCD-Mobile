@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
 ================================================================================
-CCD MOBILE INVENTORY MODULE v4.5.10-Supabase
+CCD MOBILE INVENTORY MODULE v4.5.11-Supabase
 FIX-W0 2026-10-04: DEPLOY THIS FILE AS index.html (the PWA, manifest and sw.js load ./index.html).
 ================================================================================
 Pure display terminal backed by Supabase. Desktop CCD-INVENTORY-SYSTEM.html
@@ -80,6 +80,11 @@ v4.5.7 (S112, Paul): a barcode left on the red line is scanned ONCE.
 v4.5.10 (2026-10-07, S113): a restock from Etsy 0 asks about reactivating
       even when the listing was last seen active (its last unit may have
       sold on Etsy). Build notes: claude\CCD-S113-Build-Notes-v2_9_93.md
+v4.5.11 (2026-10-21, S118): the Crazy Chicks room audit is SAVED AS IT IS SCANNED
+      (cc_audit_scans, one open audit, AUD-01), resumes from any phone, keeps the
+      screen awake, shows the Tera scanner's Clear / Upload barcodes, reads its
+      battery report, and closes in one step. Records only (M-10).
+      Build notes: claude\CCD-S118-Build-Notes-Mobile-v4_5_11.md
 v4.5.9 (2026-10-06, S113, Paul): the Crazy Chicks room no longer lowers
       Etsy, Wix or Wayfair (the online cap is warehouse − TreasureMarts).
       A save, room add or room set that leaves online + room + hold-back
@@ -487,6 +492,9 @@ v4.5.8 (2026-10-04, FIX-W1/W8): a sale dated after today is refused,
         .scan-chip { padding: 5px 10px; border-radius: 14px; border: 1px solid #D1D5DB; background: white; font-size: 12px; cursor: pointer; }
         .scan-chip.on { background: #111827; color: white; border-color: #111827; }
         .scan-bigred { width: 100%; padding: 12px; border: none; border-radius: 10px; background: #DC2626; color: white; font-size: 15px; font-weight: 800; cursor: pointer; margin: 4px 0 8px; }
+        .aud-heard { font-size: 13px; font-weight: 700; padding: 7px 10px; border-radius: 8px; margin-bottom: 6px; } .aud-heard.ok { background: #DCFCE7; color: #14532D; } .aud-heard.idle { background: #F3F4F6; color: #6B7280; }
+        .aud-code { background: #fff; padding: 14px 8px; border-radius: 10px; text-align: center; } .aud-code-n { font-size: 18px; font-weight: 800; color: #111827; margin-bottom: 10px; }
+        .aud-bc { width: 100%; height: 120px; display: block; } .aud-tools { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
         .scan-mini { padding: 5px 10px; border-radius: 6px; border: 1px solid #DB2777; background: white; color: #DB2777; font-weight: 700; font-size: 12px; cursor: pointer; }
 
         /* ── FINANCIAL DISPLAY PANEL ── */
@@ -603,7 +611,7 @@ v4.5.8 (2026-10-04, FIX-W1/W8): a sale dated after today is refused,
 
         <!-- v4.4.1: everyday functions, one tap from the home screen (Paul, S103) -->
         <div class="quick-bar" id="quickBar">
-            <button class="quick-btn" style="background:#DB2777;" onclick="showRoomAudit()"><span>🐥</span><span>Chicks Audit</span></button>
+            <button class="quick-btn" style="background:#DB2777;" onclick="showRoomAudit()"><span>🐥</span><span id="homeAuditLbl">Chicks Audit</span></button>
             <button class="quick-btn" style="background:#059669;" onclick="showSalesHistory()"><span>📈</span><span>Sales</span></button>
             <button class="quick-btn" style="background:#7C3AED;" onclick="showWriteoffs()"><span>📋</span><span>Write-offs</span></button>
             <button class="quick-btn" style="background:#475569;" onclick="showActivityLog()"><span>📜</span><span>Activity</span></button>
@@ -765,7 +773,7 @@ v4.5.8 (2026-10-04, FIX-W1/W8): a sale dated after today is refused,
                 </div>
                 <div class="settings-section">
                     <div class="settings-section-title">Version</div>
-                    <div class="settings-item"><div class="settings-item-label">App Version</div><div class="settings-item-value">v4.5.10 Supabase</div><!-- FIX-W0 2026-10-04 --></div>
+                    <div class="settings-item"><div class="settings-item-label">App Version</div><div class="settings-item-value">v4.5.11 Supabase</div><!-- FIX-W0 2026-10-04 --></div>
                 </div>
             </div>
         </div>
@@ -1053,7 +1061,7 @@ v4.5.8 (2026-10-04, FIX-W1/W8): a sale dated after today is refused,
 
     <script>
         // ============================================================================
-        // CCD MOBILE v4.5.10 — SUPABASE EDITION (TOOL_VERSION below)   // FIX-W0 2026-10-04
+        // CCD MOBILE v4.5.11 — SUPABASE EDITION (TOOL_VERSION below)   // FIX-W0 2026-10-04
         // Pure display terminal. Desktop is the calculation engine.
         // Mobile reads stored values. Mobile never calculates prices.
         // ============================================================================
@@ -1076,7 +1084,7 @@ v4.5.8 (2026-10-04, FIX-W1/W8): a sale dated after today is refused,
         // Crazy Chicks is a ROOM (Paul, S103). On screen it is "Crazy Chicks" or
         // "Chicks" — never "CC" (L-5).
         // ============================================================================
-        const TOOL_VERSION = '4.5.10';   // S113   // FIX-W0 2026-10-04: version bump (registered as settings.tool_versions.mobile)
+        const TOOL_VERSION = '4.5.11';   // S118 (4.5.10 was S113)   // FIX-W0 2026-10-04: version bump (registered as settings.tool_versions.mobile)
         const DEVICE_LABEL = 'Mobile-v' + TOOL_VERSION;
         const ROOM = 'crazychicks';
         const ROOM_LABEL = 'Crazy Chicks';
@@ -2567,6 +2575,7 @@ async function registerToolVersion(client, toolKey, toolVersion) {
             }
             document.getElementById('treasureMartModal').classList.add('active');
             renderTMList();
+            audOpenBadge();   // v4.5.11
         }
 
         function renderTMList() {
@@ -2915,6 +2924,7 @@ async function registerToolVersion(client, toolKey, toolVersion) {
                     const valFound  = parseFloat(audit.total_value_found   || 0).toFixed(2);
                     const valExpect = parseFloat(audit.total_value_expected|| 0).toFixed(2);
 
+                    if (audit.status === 'open') return `<div onclick="closeAuditHistoryModal(); openScanner('audit', 'wedge')" style="background:#ECFDF5;border:2px solid #16A34A;border-radius:10px;padding:12px 14px;margin-bottom:10px;cursor:pointer;"><div style="font-weight:700;font-size:15px;color:#14532D;">🟢 Open — opened ${scanEsc(new Date(audit.opened_at || audit.created_at).toLocaleString())}${audit.device ? ' on ' + scanEsc(audit.device) : ''}</div><div style="font-size:13px;color:#166534;margin-top:4px;">Tap to carry on scanning →</div></div>`;   // v4.5.11
                     return `<div onclick="showAuditDetail('${audit.id}')" style="background:white;border:1px solid #E5E7EB;border-radius:10px;padding:12px 14px;margin-bottom:10px;cursor:pointer;transition:box-shadow 0.15s;" onmouseover="this.style.boxShadow='0 2px 8px rgba(0,0,0,0.1)'" onmouseout="this.style.boxShadow='none'">
                         <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;">
                             <div style="font-weight:600;font-size:15px;color:#1F2937;">📅 ${date}</div>
@@ -3907,6 +3917,8 @@ async function registerToolVersion(client, toolKey, toolVersion) {
             try { wb.focus({ preventScroll: true }); } catch (e) {}
         }
         function scanWedgeTake(raw) {
+            if (audReport(raw)) return;   // v4.5.11: "Battery:  95%", "Total Counts: 30" — the scanner's reports, never tags
+            if (/[A-Za-z]/.test(String(raw || ''))) { scanHint('Not a tag number: ' + String(raw).trim().slice(0, 40)); return; }
             const t = String(raw || '').replace(/[^0-9]/g, '');
             if (!t) return;
             if (t.length < 4) { scanHint('Not a tag number: ' + raw); return; }
@@ -3926,13 +3938,14 @@ async function registerToolVersion(client, toolKey, toolVersion) {
             const now = Date.now();
             if (now - (scan.wAt || 0) > 1500) scan.wbuf = '';
             scan.wAt = now;
-            if (/^[0-9]$/.test(e.key)) { scan.wbuf = (scan.wbuf || '') + e.key; e.preventDefault(); return; }
+            if (e.key && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) { scan.wbuf = (scan.wbuf || '') + e.key; e.preventDefault(); return; }   // v4.5.11: the whole line (reports too)
             if (e.key === 'Enter' || e.key === 'Tab') { const v = scan.wbuf; scan.wbuf = ''; if (v) { e.preventDefault(); scanWedgeTake(v); } return; }
+            if (e.key === 'Shift') return;
             scan.wbuf = '';
         });
         // A tag number typed by the scanner. Before the audit has loaded its tag list, it waits in the queue.
         function scanTyped(tagNo) {
-            if (scan.mode === 'audit' && !scan.audit) { scan.queue.push(tagNo); scanHint('Getting ready — ' + scan.queue.length + ' scan(s) waiting'); return; }
+            if (scan.mode === 'audit' && (!scan.audit || scan.audit.loading)) { scan.queue.push(tagNo); scanHint('Getting ready — ' + scan.queue.length + ' scan(s) waiting'); return; }
             scanAccept(tagNo, 'scanner');
         }
         function scanDrainQueue() {
@@ -3965,7 +3978,7 @@ async function registerToolVersion(client, toolKey, toolVersion) {
         // v4.5.6: the Close button - a typed name is not dropped without asking
         async function scanClose() { await scanKeepName(); closeScanner(); }
         function closeScanner() {
-            scanStopCamera(); scanSoundDone();
+            scanStopCamera(); scanSoundDone(); audWakeOff();   // v4.5.11
             if (scan.ocr) { scan.ocr.then(w => w.terminate()).catch(() => {}); scan.ocr = null; }
             scan.frames = new Map(); scan.queue = []; scan.wbuf = ''; scan.wedgeOnly = false;
             document.getElementById('scanModal').classList.remove('active', 'wedge');
@@ -4013,7 +4026,7 @@ async function registerToolVersion(client, toolKey, toolVersion) {
             let f = null;
             if (via === 'camera' && at) { const g = scanGrabFrame(); if (g) { const a2 = { x1: at.x1 * g.k, x2: at.x2 * g.k, y: at.y * g.k }; f = scanLabelCrop(g, a2); scanKeepFrame(tagNo, f, g, a2); } }
             window.SCAN_LOG = (window.SCAN_LOG || []).concat([tagNo]);
-            if (scan.mode === 'audit') { scanAuditAdd(tagNo); return; }
+            if (scan.mode === 'audit') { scanAuditAdd(tagNo, via); return; }
             scan.paused = true;
             if (scanPendingName()) { scanKeepName().then(() => scanLookup(tagNo)); return; }   // v4.5.6
             scanLookup(tagNo);
@@ -4250,54 +4263,145 @@ async function registerToolVersion(client, toolKey, toolVersion) {
             finally { scan.busy = false; }
         }
 
-        // ── Scan audit (option A: records only). v4.5.1 (Paul, S104 09-21): a tag is a LABEL, not a unit —
-        // spare tags are printed to use up sheets — but every unit ON THE ROOM'S SHELF carries a sticker,
-        // because their register needs it. So the count is per ITEM: stickers scanned vs the room count.
-        async function scanAuditStart() {
-            const tags = await sbFetchAll(() => sbClient.from('crazychicks_tags').select('tag_no,item_id,sku,tag_price,status,note').order('tag_no', { ascending: true }));
-            scan.audit = { byTag: new Map(tags.map(t => [t.tag_no, t])), scanned: new Set(), unknown: new Set(), started: new Date(), last: null, filter: 'all' };
-            // v4.5.6: the stickers scanned so far in THIS audit are kept on the phone until the audit is saved or reset,
-            // so closing the scanner and coming back carries on where you were.
-            let kept = [];
-            try { kept = JSON.parse(localStorage.getItem('ccd_room_scan_tags') || '[]'); } catch (e) {}
-            for (const n of kept) { if (scan.audit.byTag.has(n)) scan.audit.scanned.add(n); }
-            if (kept.length) scan.audit.resumed = scan.audit.scanned.size;
+        // ── v4.5.11 (S118, Paul 2026-10-21 14:38-16:32 — claude\CCD-S118-Phone-Audit-Design.md): THE ROOM AUDIT IS SAVED AS IT IS SCANNED.
+        // One OPEN audit per channel (tm_audits.status 'open', AUD-01). Every tag scanned is written AT ONCE to cc_audit_scans
+        // (unique audit_id + tag_no: a tag counts once, from any phone, however often it is scanned or uploaded) and shown
+        // "✓ saved" only after the database answers. No connection = not saved and NOT kept to send later (M-2): the
+        // scanner's own Storage Mode is the safety net — the phone shows its Upload All / Clear barcodes. Close writes the
+        // per-item lines and the totals and closes the audit in ONE step. RECORDS ONLY (M-10, N-6): nothing is written off,
+        // no room count changes. The screen is kept awake while the audit is on screen.
+        // Option A, unchanged: a tag is a LABEL, not a unit; every unit ON THE ROOM'S SHELF carries a sticker, so the count is
+        // per ITEM: stickers scanned vs the room count.
+        const AUD_SCAN_COLS = 'tag_no,scanned_at,device,source';
+        const HW_CODES = {   // Tera HW0009 manual Ver.01.1.02 (Shared\HW0009_ENG.pdf), decoded from its pages (S118 §2)
+            clear: { v: '%%SpecCode18', name: 'Clear All Stored Codes', hint: 'Empties the scanner’s memory.' },
+            upload: { v: '%%SpecCode16', name: 'Upload All Stored Codes', hint: 'Sends every code the scanner is holding.' },
+            storage: { v: '%%SpecCode11', name: 'Storage Mode', hint: 'The scanner keeps each scan instead of sending it.' },
+            realtime: { v: '%%SpecCode10', name: 'Real Time Mode', hint: 'The scanner sends each scan at once (normal).' },
+            battery: { v: '%%SpecCode15', name: 'Show Battery Level', hint: 'The scanner types its battery level.' }
+        };
+        // Code 128 (code set B) drawn as SVG bars — the scanner reads them off the phone screen (proven 10-21 15:50-16:31).
+        const C128 = ['212222','222122','222221','121223','121322','131222','122213','122312','132212','221213','221312','231212','112232','122132','122231','113222','123122','123221','223211','221132','221231','213212','223112','312131','311222','321122','321221','312212','322112','322211','212123','212321','232121','111323','131123','131321','112313','132113','132311','211313','231113','231311','112133','112331','132131','113123','113321','133121','313121','211331','231131','213113','213311','213131','311123','311321','331121','312113','312311','332111','314111','221411','431111','111224','111422','121124','121421','141122','141221','112214','112412','122114','122411','142112','142211','241211','221114','413111','241112','134111','111242','121142','121241','114212','124112','124211','411212','421112','421211','212141','214121','412121','111143','111341','131141','114113','114311','411113','411311','113141','114131','311141','411131','211412','211214','211232','2331112'];
+        function code128Svg(text) {
+            const vals = [104]; for (const ch of String(text)) { const c = ch.charCodeAt(0) - 32; if (c < 0 || c > 94) throw new Error('not printable: ' + ch); vals.push(c); }
+            let sum = 104; for (let i = 1; i < vals.length; i++) sum += i * vals[i]; vals.push(sum % 103); vals.push(106);
+            const widths = vals.map(v => C128[v]).join(''); const q = 12; let x = q, bars = '';
+            for (let i = 0; i < widths.length; i++) { const w = +widths[i]; if (i % 2 === 0) bars += `<rect x="${x}" y="0" width="${w}" height="60" fill="#000"/>`; x += w; }
+            return `<svg class="aud-bc" viewBox="0 0 ${x + q} 60" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg"><rect width="${x + q}" height="60" fill="#fff"/>${bars}</svg>`;
+        }
+        function audCodeShow(key, after) {   // a scanner code, full width on white; the scanner's typing still reaches the audit (page key catcher)
+            const c = HW_CODES[key]; if (!c || !scan.audit) return;
+            scan.audit.code = { key, after: after || null };
             scanAuditRender();
         }
-        function scanAuditKeep() { try { localStorage.setItem('ccd_room_scan_tags', JSON.stringify([...scan.audit.scanned])); } catch (e) {} }
-        // v4.5.6 (Paul: "a hit on the scanner should show the item as found"): the item's checklist line follows the stickers
-        // scanned - all its stickers = Found, some = Partial. Never lowers a count, never touches "Removed", writes nothing to
-        // the database (the audit is saved from the checklist as before).
-        function scanAuditMark(itemId) {
+        function audCodeDone() { if (!scan.audit) return; const a = scan.audit.code && scan.audit.code.after; scan.audit.code = null; if (a === 'start') audStartAfterClear(); else scanAuditRender(); }
+
+        // The screen stays awake while the audit is on screen (Screen Wake Lock; asked again when the app comes back).
+        const audWake = { lock: null, refused: false };
+        async function audWakeOn() {
+            if (!scan.audit || !document.getElementById('scanModal')?.classList.contains('active')) return;
+            try { if (!navigator.wakeLock) { audWake.refused = true; return; } if (audWake.lock && !audWake.lock.released) return; audWake.lock = await navigator.wakeLock.request('screen'); audWake.refused = false; audWake.lock.addEventListener?.('release', () => { audWake.lock = null; }); }
+            catch (e) { audWake.refused = true; }
+        }
+        function audWakeOff() { try { if (audWake.lock) audWake.lock.release(); } catch (e) {} audWake.lock = null; }
+        document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && scan.audit && scan.audit.id) { audWakeOn().then(() => scanAuditRender()); } });
+
+        // The scanner sign: what the phone can PROVE (an iPhone web app cannot see Bluetooth devices).
+        function audHeard(battery) { if (!scan.audit) return; scan.audit.heardAt = Date.now(); if (battery != null) scan.audit.battery = battery; }
+        function audHeardText() {
+            const A = scan.audit; if (!A || !A.heardAt) return { cls: 'idle', t: '🔫 No scan yet — scan any sticker to check the scanner' };
+            const s = Math.round((Date.now() - A.heardAt) / 1000), b = A.battery != null ? ` · battery ${A.battery}%` : '';
+            if (s > 300) return { cls: 'idle', t: `🔫 Not heard for ${Math.round(s / 60)} min${b} — is the scanner on and paired?` };
+            return { cls: 'ok', t: `🔫 Scanner heard ${s < 60 ? s + ' s' : Math.round(s / 60) + ' min'} ago${b}` };
+        }
+        setInterval(() => { const e = document.getElementById('audHeard'); if (e && scan.audit) { const h = audHeardText(); e.className = 'aud-heard ' + h.cls; e.textContent = h.t; } }, 5000);
+
+        // What the scanner types that is not a tag: its own reports (S118 §2 — "Battery:  95%", "Total Counts:      30").
+        function audReport(raw) {
+            const s = String(raw || ''); const b = s.match(/Battery:\s*(\d{1,3})\s*%/i);
+            if (b) { audHeard(+b[1]); if (scan.audit) { scanHint(`🔋 Scanner battery ${b[1]}%`); scanAuditRender(); } else scanHint(`🔋 Scanner battery ${b[1]}%`); return true; }
+            if (/Total\s*Counts?\s*:/i.test(s)) { audHeard(); scanHint('That number is every scan the scanner has ever made — not what it is holding. Nothing counted.'); return true; }
+            if (/^%%/.test(s.trim())) { audHeard(); return true; }   // a settings code typed back (not seen on Paul's scanner; ignored if it ever is)
+            return false;
+        }
+
+        async function scanAuditStart() {
+            const tags = await sbFetchAll(() => sbClient.from('crazychicks_tags').select('tag_no,item_id,sku,tag_price,status,note').order('tag_no', { ascending: true }));
+            scan.audit = { loading: true, id: null, byTag: new Map(tags.map(t => [t.tag_no, t])), scanned: new Set(), unknown: new Set(), saving: new Set(), started: new Date(), last: null, filter: 'all', heardAt: 0, battery: null, code: null, upload: null, opened: null, device: null };
+            try { localStorage.removeItem('ccd_room_scan_tags'); } catch (e) {}   // 4.5.10 kept scans on the phone only; 4.5.11 never does
+            const { data, error } = await sbClient.from('tm_audits').select('id,opened_at,device,created_at').eq('channel', ROOM).eq('status', 'open').limit(1);
+            if (error) throw new Error('Could not read the open audit: ' + error.message);
+            if (data && data.length) { await audLoad(data[0]); scan.audit.loading = false; scanDrainQueue(); scanAuditRender(); audWakeOn().then(() => scanAuditRender()); return; }
+            scan.audit.loading = false; audStartScreen(); scanDrainQueue();
+        }
+        function audStartScreen() {
+            scanPanel(`<div class="scan-h" style="margin-top:0">Start a Crazy Chicks room audit</div>
+                <div class="scan-msg"><b>1.</b> Clear the scanner, so nothing from an earlier session is counted.</div>
+                <button class="scan-btn" onclick="audCodeStart()">Show the Clear barcode</button>
+                <button class="scan-mini" style="margin:8px 0 4px" onclick="audStartAfterClear()">Skip — the scanner is already empty</button>
+                <div class="scan-note">Each scan is saved the moment it is read. The audit stays open until you close it — leave and come back from any phone. Nothing is written off and no room count changes.</div>`);
+        }
+        function audCodeStart() {
+            scanPanel(`<div class="aud-code"><div class="aud-code-n">${scanEsc(HW_CODES.clear.name)}</div>${code128Svg(HW_CODES.clear.v)}<div class="scan-note">Point the scanner at this and pull the trigger. It beeps when it reads it.</div><button class="scan-btn" onclick="audStartAfterClear()">Done — start the audit</button></div>`);
+        }
+        async function audStartAfterClear() {
+            if (!requireOnline()) return;
+            const now = new Date().toISOString();
+            const { data, error } = await sbClient.from('tm_audits').insert({ channel: ROOM, status: 'open', opened_at: now, device: DEVICE_LABEL, audit_date: now.substring(0, 10), created_by: 'mobile' }).select('id,opened_at,device,created_at').single();
+            if (error) {   // another phone opened one a moment ago (one open audit per channel): carry on with it
+                const { data: d2 } = await sbClient.from('tm_audits').select('id,opened_at,device,created_at').eq('channel', ROOM).eq('status', 'open').limit(1);
+                if (d2 && d2.length) { await audLoad(d2[0]); scanAuditRender(); return; }
+                scanPanel(`<div class="scan-err">The audit could not be started: ${scanEsc(error.message)}</div>`); return;
+            }
+            logActivity('INVENTORY', 'ROOM_AUDIT_OPENED', ROOM, `Crazy Chicks room audit opened on the phone`, { audit_id: data.id });
+            await audLoad(data); scanHint('🔫 Scan any sticker to check the scanner'); scanAuditRender(); audWakeOn().then(() => scanAuditRender());
+        }
+        async function audLoad(a) {
+            const A = scan.audit; A.id = a.id; A.opened = a.opened_at || a.created_at; A.device = a.device || '';
+            const rows = await sbFetchAll(() => sbClient.from('cc_audit_scans').select(AUD_SCAN_COLS).eq('audit_id', a.id).order('scanned_at', { ascending: true }));
+            A.scanned = new Set(); A.unknown = new Set();
+            for (const r of rows) (A.byTag.has(r.tag_no) ? A.scanned : A.unknown).add(r.tag_no);
+            A.resumed = rows.length;
+        }
+        function scanAuditKeep() {}   // 4.5.11: scans live in the database (kept for the link path, which still calls it)
+        function scanAuditMark(itemId) {   // 4.5.11: counts only — the checklist is not written by a scanner audit any more
             const it = scanItem(itemId); if (!it) return;
             const room = it.channels?.crazychicks || 0; if (room <= 0) return;
             let s = 0; for (const n of scan.audit.scanned) { const t = scan.audit.byTag.get(n); if (t && t.status === 'in_room' && String(t.item_id) === String(itemId)) s++; }
-            loadTreasureMartAudit();
-            const prev = treasureMartAudit[itemId] || { status: 'unchecked', foundQty: room, note: '' };
-            if (prev.status === 'removed') return;
-            const f = Math.min(s, room);
-            prev.foundQty = f; prev.status = f >= room ? 'found' : 'partial';
-            prev.note = [(prev.note || '').replace(/\s*\[scan:[^\]]*\]/g, '').trim(), `[scan: ${s} of ${room}]`].filter(Boolean).join(' ');
-            treasureMartAudit[itemId] = prev; saveTreasureMartAuditState();
             return { s, room };
         }
 
-        function scanAuditAdd(tagNo) {
+        async function scanAuditAdd(tagNo, via) {
             const A = scan.audit; if (!A) return;
+            audHeard();
+            if (!A.id) { scanHint('Start the audit first — that scan was not counted.'); scanFeedback('warn', 'Start the audit first — not counted'); return; }
+            const up = A.upload && A.upload.on ? A.upload : null; if (up) up.got++;
             const t = A.byTag.get(tagNo), it = t ? scanItem(t.item_id) : null;
             const nm = t ? `${t.sku}${it ? ' · ' + (it.productName || '') : ''}` : '';
+            if (A.scanned.has(tagNo) || A.unknown.has(tagNo)) { if (up) up.saved++; A.last = { kind: 'warn', text: `Already scanned · ${t ? nm : 'tag ' + tagNo}`, tagNo }; if (!up) scanFeedback('warn', A.last.text); scanAuditRender(); return; }
+            if (A.saving.has(tagNo)) { if (up) up.dup = (up.dup || 0) + 1; return; }
+            if (!navigator.onLine) { if (up) up.failed++; A.last = { kind: 'bad', text: `✗ Not saved — no connection · tag ${tagNo}. Scan it again when you are back online (or keep the scanner in Storage Mode and upload later).`, tagNo }; scanFeedback('bad', 'Not saved — no connection'); scanAuditRender(); return; }
+            A.saving.add(tagNo);
+            const src = up ? 'upload' : (via === 'camera' ? 'camera' : 'scanner');
+            const { error } = await sbClient.from('cc_audit_scans').insert({ audit_id: A.id, tag_no: tagNo, device: DEVICE_LABEL, source: src });
+            A.saving.delete(tagNo);
+            if (scan.audit !== A) return;
+            if (error && !(error.code === '23505' || /duplicate key/i.test(error.message || ''))) {
+                if (up) up.failed++;
+                A.last = { kind: 'bad', text: `✗ Not saved · tag ${tagNo} — ${error.message}. Scan it again.`, tagNo }; scanFeedback('bad', 'Not saved'); scanAuditRender(); return;
+            }
+            if (up) up.saved++;
             let kind, text;
-            if (A.scanned.has(tagNo) || A.unknown.has(tagNo)) { kind = 'warn'; text = `Already scanned · ${t ? nm : 'tag ' + tagNo}`; }
-            else if (!t) { A.unknown.add(tagNo); kind = 'bad'; text = `✗ Tag ${tagNo} isn't on record — link it`; }
+            if (!t) { A.unknown.add(tagNo); kind = 'bad'; text = `✓ saved · ✗ Tag ${tagNo} isn't on record — link it`; }
             else {
-                A.scanned.add(tagNo); scanAuditKeep();
-                if (t.status !== 'in_room') { kind = 'bad'; text = `✗ ${t.status === 'pulled' ? 'Replaced' : t.status === 'sold' ? 'Sold' : 'Voided'} tag on the shelf · ${nm}`; }
-                else if (!it || (it.channels?.crazychicks || 0) <= 0) { kind = 'warn'; text = `! ${nm} — not in the room count`; }
-                else { const m = scanAuditMark(t.item_id); kind = 'ok'; text = `✓ ${nm}` + (m ? ` · ${Math.min(m.s, m.room)} of ${m.room}` : ''); }
+                A.scanned.add(tagNo);
+                if (t.status !== 'in_room') { kind = 'bad'; text = `✓ saved · ✗ ${t.status === 'pulled' ? 'Replaced' : t.status === 'sold' ? 'Sold' : 'Voided'} tag on the shelf · ${nm}`; }
+                else if (!it || (it.channels?.crazychicks || 0) <= 0) { kind = 'warn'; text = `✓ saved · ! ${nm} — not in the room count`; }
+                else { const m = scanAuditMark(t.item_id); kind = 'ok'; text = `✓ saved · ${nm}` + (m ? ` · ${Math.min(m.s, m.room)} of ${m.room}` : ''); }
             }
             A.last = { kind, text, tagNo };
-            scanFeedback(kind, text);
-            if (scan.paused) return;   // v4.5.3: a tag is being linked — counted; the list redraws on "scan next"
+            if (!up) scanFeedback(kind, text); else if (kind !== 'ok') scanFeedback(kind, null); else scanFeedback('ok', null);
+            if (scan.paused) return;
             scanAuditRender();
         }
         function scanAuditFilter(f) { if (scan.audit) { scan.audit.filter = f; scanAuditRender(); } }
@@ -4318,8 +4422,25 @@ async function registerToolVersion(client, toolKey, toolVersion) {
             return rows.sort((a, b) => (a.it.sku || '').localeCompare(b.it.sku || ''));
         }
 
+        // 📦 Upload from the scanner's memory (Storage Mode): the codes pour in as typed lines; each is saved like any scan.
+        function audUploadStart() {
+            const A = scan.audit; if (!A || !A.id) return;
+            if (!navigator.onLine) { showToast('No connection — leave the codes in the scanner and upload when you are back online.', 'error'); return; }
+            A.upload = { on: true, got: 0, saved: 0, failed: 0, at: Date.now() }; A.code = { key: 'upload', after: 'upload' }; scanAuditRender();
+        }
+        function audUploadDone() { const A = scan.audit; if (!A || !A.upload) return; A.upload.on = false; A.code = null; scanAuditRender(); }
+        function audUploadSettled() { const u = scan.audit && scan.audit.upload; return !!u && u.got > 0 && u.failed === 0 && (scan.audit.saving.size === 0); }
+
         function scanAuditRender() {
             const A = scan.audit; if (!A) return;
+            if (!A.id) { if (!A.code) return; }
+            if (A.code) {   // a scanner code on screen; the typing still lands in the audit
+                const c = HW_CODES[A.code.key], u = A.upload && A.code.key === 'upload' ? A.upload : null;
+                scanPanel(`<div class="aud-code"><div class="aud-code-n">${scanEsc(c.name)}</div>${code128Svg(c.v)}<div class="scan-note">${scanEsc(c.hint)} Point the scanner at this and pull the trigger.</div>` +
+                    (u ? `<div class="scan-sum" id="audUpCount">Upload: <b>${u.got}</b> received · <b>${u.saved}</b> saved${u.failed ? ` · <b style="color:#B91C1C">${u.failed} not saved</b>` : ''}</div><div class="scan-note">Nothing arriving? The scanner may be in Real Time mode, holding nothing.</div><button class="scan-btn" onclick="audUploadDone()">Done uploading</button>`
+                       : `<button class="scan-btn" onclick="audCodeDone()">Done</button>`) + `</div>`);
+                scanWedgeFocus(); return;
+            }
             const rows = scanAuditCounts();
             const inRoom = rows.filter(r => r.room > 0);
             const units = inRoom.reduce((s, r) => s + r.room, 0), found = inRoom.reduce((s, r) => s + Math.min(r.scanned, r.room), 0);
@@ -4327,49 +4448,69 @@ async function registerToolVersion(client, toolKey, toolVersion) {
             const over = rows.filter(r => r.scanned > r.room);
             const offShelf = [...A.scanned].map(n => A.byTag.get(n)).filter(t => t && t.status !== 'in_room');
             const nm = it => `<b>${scanEsc(it.sku)}</b> · ${scanEsc(it.productName || '')}`;
-            let h = A.last ? `<div class="scan-last ${A.last.kind}">${scanEsc(A.last.text)}</div>` : '';
+            const hd = audHeardText(), op = A.opened ? new Date(A.opened) : null;
+            let h = `<div class="aud-heard ${hd.cls}" id="audHeard">${scanEsc(hd.t)}</div>`;
+            if (audWake.refused) h += `<div class="scan-note" style="color:#A16207">The screen may go to sleep on this phone — tap it now and then. Every scan is already saved.</div>`;
+            h += A.last ? `<div class="scan-last ${A.last.kind}">${scanEsc(A.last.text)}</div>` : '';
             h += `<div class="scan-sum"><b>${found}</b> of <b>${units}</b> units found · <span style="color:#15803D">🟢 ${g.length}</span> · <span style="color:#A16207">🟡 ${y.length}</span> · <span style="color:#B91C1C">🔴 ${red.length}</span> item(s)` +
-                (A.resumed ? `<br><span class="scan-note">Carried on from earlier: ${A.resumed} sticker(s) already scanned in this audit.</span>` : '') + `</div>`;
+                `<br><span class="scan-note">Audit opened ${op ? scanEsc(op.toLocaleString([], { weekday: 'short', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })) : ''}${A.device ? ' on ' + scanEsc(A.device) : ''} · ${A.scanned.size + A.unknown.size} tag(s) saved${A.saving.size ? ` · ${A.saving.size} saving…` : ''}</span></div>`;
+            const u = A.upload; if (u && !u.on && u.got) h += `<div class="scan-sum" style="background:${u.failed ? '#FEF2F2' : '#F0FDF4'}">Last upload: <b>${u.got}</b> received · <b>${u.saved}</b> saved${u.failed ? ` · <b style="color:#B91C1C">${u.failed} not saved — upload again</b>` : ''}</div>`;
+            h += `<div class="scan-btns aud-tools"><button class="scan-mini" onclick="audUploadStart()">📦 Upload from scanner</button>` +
+                 (audUploadSettled() ? `<button class="scan-mini" onclick="audCodeShow('clear')">🧹 Clear the scanner</button>` : '') +
+                 `<button class="scan-mini" onclick="audCodeShow('battery')">🔋 Battery</button></div>`;
             if (A.unknown.size) h += `<div class="scan-h" style="color:#B91C1C">Tags not on record (${A.unknown.size}) — link each to its item so it counts</div>` +
-                [...A.unknown].map(n => `<button class="scan-bigred" onclick="scanAuditLink('${scanEsc(n)}')">🔗 Link tag ${scanEsc(n)} to an item</button>`).join('');
+                [...A.unknown].map(n => `<button class="scan-bigred" data-tag="${scanEsc(n)}" onclick="scanAuditLink(this.dataset.tag)">🔗 Link tag ${scanEsc(n)} to an item</button>`).join('');
             if (over.length) h += `<div class="scan-h" style="color:#A16207">More stickers than the room count (${over.length})</div>` +
-                over.map(r => `<div class="scan-arow y"><span>${nm(r.it)}<br><span class="scan-note">room ${r.room} · scanned ${r.scanned}</span></span><button class="scan-mini" onclick="scanRoomSet('${scanEsc(r.id)}', ${r.room}, ${r.scanned})">${r.room === 0 ? 'Put ' + r.scanned + ' in the room' : 'Set room to ' + r.scanned}</button></div>`).join('');
+                over.map(r => `<div class="scan-arow y"><span>${nm(r.it)}<br><span class="scan-note">room ${r.room} · scanned ${r.scanned}</span></span><button class="scan-mini" data-id="${scanEsc(r.id)}" data-room="${r.room}" data-n="${r.scanned}" onclick="scanRoomSet(this.dataset.id, +this.dataset.room, +this.dataset.n)">${r.room === 0 ? 'Put ' + r.scanned + ' in the room' : 'Set room to ' + r.scanned}</button></div>`).join('');
             if (offShelf.length) h += `<div class="scan-h" style="color:#B91C1C">Replaced or sold tags still on the shelf (${offShelf.length}) — take them off</div>` +
                 offShelf.map(t => { const it = scanItem(t.item_id); return `<div class="scan-arow r"><span>Tag ${scanEsc(t.tag_no)} · ${it ? nm(it) : scanEsc(t.sku)} — ${t.status === 'pulled' ? 'replaced' : scanEsc(t.status)}</span></div>`; }).join('');
-            const F = A.filter || 'all', chip = (k, t) => `<button class="scan-chip${F === k ? ' on' : ''}" onclick="scanAuditFilter('${k}')">${t}</button>`;
+            const F = A.filter || 'all', chip = (k, t) => `<button class="scan-chip${F === k ? ' on' : ''}" data-f="${k}" onclick="scanAuditFilter(this.dataset.f)">${t}</button>`;
             h += `<div class="scan-h">The room — every item</div><div class="scan-chips">${chip('all', 'All ' + inRoom.length)}${chip('red', '🔴 Not found ' + red.length)}${chip('yellow', '🟡 Partly ' + y.length)}${chip('green', '🟢 Found ' + g.length)}</div>`;
             const show = F === 'red' ? red : F === 'yellow' ? y : F === 'green' ? g : inRoom;
             h += show.map(r => { const c = r.scanned >= r.room ? 'g' : r.scanned > 0 ? 'y' : 'r';
                 return `<div class="scan-arow ${c}" data-item="${scanEsc(r.id)}"><span>${nm(r.it)}</span><span class="cnt">${Math.min(r.scanned, r.room)} / ${r.room}</span></div>`; }).join('')
                 || '<div class="scan-note">Nothing here.</div>';
-            h += `<div class="scan-note" style="margin-top:10px;">Each scan already marks its item Found (or Partial) in the checklist. Nothing is written off here. Finish marks what wasn't scanned as Missing in the checklist; review it and Save the audit as usual. Close keeps your place.</div>
-                  <div class="scan-btns"><button class="scan-btn" onclick="scanAuditFinish()">✓ Finish — mark what wasn't scanned as Missing</button></div>`;
+            h += `<div class="scan-note" style="margin-top:10px;">Every scan is saved as it is read. Leave and come back any time — the audit stays open. Close it when the whole room is scanned: what wasn't scanned is recorded as not found. Nothing is written off here.</div>
+                  <div class="scan-btns"><button class="scan-btn" onclick="scanAuditFinish()">✓ Close the audit</button></div>`;
             scanPanel(h);
-            scanWedgeFocus();   // v4.5.3
+            scanWedgeFocus();
         }
 
         function scanAuditLink(tagNo) { scan.paused = true; scanShowUnknown(tagNo); }
 
-        function scanAuditFinish() {
-            const A = scan.audit; if (!A) return;
-            if (A.unknown.size && !confirm(`${A.unknown.size} scanned tag(s) are not linked yet, so their items will count as not found.\n\nFinish anyway?`)) return;
-            loadTreasureMartAudit();
-            let set = 0;
-            for (const r of scanAuditCounts()) {
-                if (r.room <= 0) continue;
-                const prev = treasureMartAudit[r.id] || { status: 'unchecked', foundQty: r.room, note: '' };
-                if (prev.status === 'removed') continue;   // a deliberate "brought home" stays as it is
-                const f = Math.min(r.scanned, r.room);
-                prev.foundQty = f; prev.status = f === r.room ? 'found' : f === 0 ? 'missing' : 'partial';
-                prev.note = [(prev.note || '').replace(/\s*\[scan:[^\]]*\]/g, '').trim(), `[scan: ${r.scanned} of ${r.room}]`].filter(Boolean).join(' ');
-                treasureMartAudit[r.id] = prev; set++;
+        // Close: ONE step — the per-item lines, the totals, status closed. Guarded on status 'open' (a second phone cannot close it twice).
+        async function scanAuditFinish() {
+            const A = scan.audit; if (!A || !A.id) return;
+            if (!requireOnline()) return;
+            if (A.saving.size) { showToast('Still saving ' + A.saving.size + ' scan(s) — a moment.', 'error'); return; }
+            const rows = scanAuditCounts().filter(r => r.room > 0);
+            const red = rows.filter(r => r.scanned === 0).length, y = rows.filter(r => r.scanned > 0 && r.scanned < r.room).length;
+            if (!confirm(`Close the Crazy Chicks room audit?\n\n${red} item(s) not found and ${y} partly found will be recorded as such.${A.unknown.size ? `\n${A.unknown.size} scanned tag(s) are not linked yet, so their items count as not found.` : ''}\n\nNothing is written off and no room count changes.`)) return;
+            let totalExpected = 0, totalFound = 0, partialUnits = 0, missingUnits = 0, valExpected = 0, valFound = 0; const itemRows = [];
+            for (const r of rows) {
+                const f = Math.min(r.scanned, r.room), status = f >= r.room ? 'found' : f === 0 ? 'missing' : 'partial';
+                const price = r.it.channelPrices?.crazychicks || r.it.retailPrice || 0;
+                totalExpected += r.room; totalFound += f; valExpected += r.room * price; valFound += f * price;
+                if (status === 'missing') missingUnits += r.room; else if (status === 'partial') partialUnits += r.room - f;
+                itemRows.push({ audit_id: A.id, item_id: r.it.id, sku: r.it.sku, product_name: r.it.productName || null, brand_name: r.it.brandName || null, expected_qty: r.room, found_qty: f, status, price_at_audit: price || null, notes: `[scan: ${r.scanned} of ${r.room}]` });
             }
-            saveTreasureMartAuditState();
-            scan.audit = null;
-            try { localStorage.removeItem('ccd_room_scan_tags'); } catch (e) {}
-            closeScanner();
-            showRoomAudit(true);
-            showResult(`Scan put in the room checklist for ${set} item(s). Nothing was written off — review the checklist and Save the audit as usual.`, 'success');
+            const offShelf = [...A.scanned].map(n => A.byTag.get(n)).filter(t => t && t.status !== 'in_room').length, over = scanAuditCounts().filter(r => r.scanned > r.room).length;
+            const notes = [A.unknown.size ? `${A.unknown.size} tag(s) not on record` : '', offShelf ? `${offShelf} replaced/sold tag(s) on the shelf` : '', over ? `${over} item(s) with more stickers than the room count` : ''].filter(Boolean).join(' · ') || null;
+            try {
+                const { data: cur, error: e0 } = await sbClient.from('tm_audit_items').select('id').eq('audit_id', A.id);
+                if (e0) throw e0;
+                if (cur && cur.length) throw new Error('this audit already has its item lines — it was closed on another phone. Open Audit History.');
+                for (let i = 0; i < itemRows.length; i += 50) { const { error } = await sbClient.from('tm_audit_items').insert(itemRows.slice(i, i + 50)); if (error) throw error; }
+                const { data: upd, error: e1 } = await sbClient.from('tm_audits').update({ status: 'closed', closed_at: new Date().toISOString(),
+                    total_items_expected: totalExpected, total_items_found: totalFound, total_items_partial: partialUnits, total_items_missing: missingUnits, total_items_removed: 0,
+                    total_value_expected: parseFloat(valExpected.toFixed(2)), total_value_found: parseFloat(valFound.toFixed(2)), notes }).eq('id', A.id).eq('status', 'open').select('id');
+                if (e1) throw e1;
+                if (!upd || upd.length !== 1) throw new Error('the audit was not open any more — it was closed on another phone.');
+                logActivity('INVENTORY', 'ROOM_AUDIT_CLOSED', ROOM, `Crazy Chicks room audit closed: ${totalFound} of ${totalExpected} units found · ${red} not found · ${y} partly${notes ? ' · ' + notes : ''}`, { audit_id: A.id, expected: totalExpected, found: totalFound, missing_items: red, partial_items: y });
+            } catch (e) { showToast('Not closed: ' + (e.message || e), 'error'); return; }
+            const id = A.id; scan.audit = null; audWakeOff(); closeScanner();
+            showResult(`Audit closed: ${totalFound} of ${totalExpected} units found. Nothing was written off — after this week's Crazy Chicks sales are entered, write off what is still missing from Audit History.`, 'success');
+            showAuditDetail(id);
         }
 
         // v4.5.1: from the scan audit — set the room count to what was scanned (only ever UP from here;
@@ -4401,6 +4542,20 @@ async function registerToolVersion(client, toolKey, toolVersion) {
                 scanAuditRender();
             } catch (e) { showToast(e.message, 'error'); }
             finally { scan.busy = false; }
+        }
+
+
+        // v4.5.11: an OPEN room audit is shown where you start one — "▶ Resume audit (37 tags)" on the 🔫 Scanner button and the home button.
+        async function audOpenBadge() {
+            if (!sbClient || !sbConnected) return;
+            try {
+                const { data } = await sbClient.from('tm_audits').select('id').eq('channel', ROOM).eq('status', 'open').limit(1);
+                const open = data && data.length ? data[0] : null; let n = 0;
+                if (open) { const { count } = await sbClient.from('cc_audit_scans').select('tag_no', { count: 'exact', head: true }).eq('audit_id', open.id); n = count || 0; }
+                const b = document.getElementById('scanAuditWedgeBtn'), h = document.getElementById('homeAuditLbl');
+                if (b) b.textContent = open ? `▶ Resume audit (${n})` : '🔫 Scanner';
+                if (h) h.textContent = open ? `Resume audit (${n})` : 'Chicks Audit';
+            } catch (e) {}
         }
 
         async function initApp() {
