@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
 ================================================================================
-CCD MOBILE INVENTORY MODULE v4.5.12-Supabase
+CCD MOBILE INVENTORY MODULE v4.5.13-Supabase
 FIX-W0 2026-10-04: DEPLOY THIS FILE AS index.html (the PWA, manifest and sw.js load ./index.html).
 ================================================================================
 Pure display terminal backed by Supabase. Desktop CCD-INVENTORY-SYSTEM.html
@@ -89,6 +89,10 @@ v4.5.12 (2026-10-21, S119): an EMPTY room audit cannot be closed as a real one �
       is refused and offers Discard (no item lines); with scans, the question is on the
       page with the NOT-FOUND count first, in red; ✕ Leave (audit stays open).
       Build notes: claude\CCD-S119-Build-Notes-Mobile-v4_5_12.md
+v4.5.13 (2026-10-21, S119): a discarded audit reads "Discarded" in Audit History — its totals
+      are written empty (they default to 0 on prod) and its note is recognised too; ✓ Close
+      the audit also sits in the button row at the top (Paul 20:52).
+      Build notes: claude\CCD-S119-Build-Notes-Mobile-v4_5_13.md
 v4.5.9 (2026-10-06, S113, Paul): the Crazy Chicks room no longer lowers
       Etsy, Wix or Wayfair (the online cap is warehouse − TreasureMarts).
       A save, room add or room set that leaves online + room + hold-back
@@ -499,7 +503,7 @@ v4.5.8 (2026-10-04, FIX-W1/W8): a sale dated after today is refused,
         .aud-ask { padding: 4px 2px; } .aud-ask-red { background: #FEE2E2; color: #B91C1C; border: 2px solid #DC2626; border-radius: 10px; padding: 12px; font-size: 20px; font-weight: 800; margin-bottom: 8px; }
         .aud-ask-empty { background: #FEF3C7; color: #92400E; border: 2px solid #D97706; border-radius: 10px; padding: 12px; font-size: 18px; font-weight: 800; margin-bottom: 8px; }
         .aud-ask-list { font-size: 13px; color: #7F1D1D; margin: 0 0 10px 4px; } .aud-ask-y { font-size: 16px; font-weight: 700; color: #A16207; margin-bottom: 6px; }
-        .aud-ask-go { background: #B91C1C !important; }
+        .aud-ask-go { background: #B91C1C !important; } .aud-close-top { font-weight: 800; border-width: 2px; }
         .aud-heard { font-size: 13px; font-weight: 700; padding: 7px 10px; border-radius: 8px; margin-bottom: 6px; } .aud-heard.ok { background: #DCFCE7; color: #14532D; } .aud-heard.idle { background: #F3F4F6; color: #6B7280; }
         .aud-code { background: #fff; padding: 14px 8px; border-radius: 10px; text-align: center; } .aud-code-n { font-size: 18px; font-weight: 800; color: #111827; margin-bottom: 10px; }
         .aud-bc { width: 100%; height: 120px; display: block; } .aud-tools { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
@@ -781,7 +785,7 @@ v4.5.8 (2026-10-04, FIX-W1/W8): a sale dated after today is refused,
                 </div>
                 <div class="settings-section">
                     <div class="settings-section-title">Version</div>
-                    <div class="settings-item"><div class="settings-item-label">App Version</div><div class="settings-item-value">v4.5.12 Supabase</div><!-- FIX-W0 2026-10-04 --></div>
+                    <div class="settings-item"><div class="settings-item-label">App Version</div><div class="settings-item-value">v4.5.13 Supabase</div><!-- FIX-W0 2026-10-04 --></div>
                 </div>
             </div>
         </div>
@@ -1069,7 +1073,7 @@ v4.5.8 (2026-10-04, FIX-W1/W8): a sale dated after today is refused,
 
     <script>
         // ============================================================================
-        // CCD MOBILE v4.5.12 — SUPABASE EDITION (TOOL_VERSION below)   // FIX-W0 2026-10-04
+        // CCD MOBILE v4.5.13 — SUPABASE EDITION (TOOL_VERSION below)   // FIX-W0 2026-10-04
         // Pure display terminal. Desktop is the calculation engine.
         // Mobile reads stored values. Mobile never calculates prices.
         // ============================================================================
@@ -1092,7 +1096,7 @@ v4.5.8 (2026-10-04, FIX-W1/W8): a sale dated after today is refused,
         // Crazy Chicks is a ROOM (Paul, S103). On screen it is "Crazy Chicks" or
         // "Chicks" — never "CC" (L-5).
         // ============================================================================
-        const TOOL_VERSION = '4.5.12';   // S119 (4.5.11 was S118)   // FIX-W0 2026-10-04: version bump (registered as settings.tool_versions.mobile)
+        const TOOL_VERSION = '4.5.13';   // S119 (4.5.12 earlier the same evening)   // FIX-W0 2026-10-04: version bump (registered as settings.tool_versions.mobile)
         const DEVICE_LABEL = 'Mobile-v' + TOOL_VERSION;
         const ROOM = 'crazychicks';
         const ROOM_LABEL = 'Crazy Chicks';
@@ -2932,7 +2936,7 @@ async function registerToolVersion(client, toolKey, toolVersion) {
                     const valFound  = parseFloat(audit.total_value_found   || 0).toFixed(2);
                     const valExpect = parseFloat(audit.total_value_expected|| 0).toFixed(2);
 
-                    if (audit.status === 'closed' && audit.closed_at && audit.total_items_expected == null) return `<div onclick="showAuditDetail('${audit.id}')" style="background:#F9FAFB;border:1px dashed #9CA3AF;border-radius:10px;padding:12px 14px;margin-bottom:10px;cursor:pointer;"><div style="font-weight:600;font-size:15px;color:#4B5563;">🗑 Discarded — empty audit, nothing recorded</div><div style="font-size:12px;color:#6B7280;margin-top:4px;">Opened ${scanEsc(new Date(audit.opened_at || audit.created_at).toLocaleString())}${audit.device ? ' on ' + scanEsc(audit.device) : ''}</div></div>`;   // v4.5.12
+                    if (audit.status === 'closed' && audit.closed_at && (audit.total_items_expected == null || /^Discarded on the phone/.test(audit.notes || ''))) return `<div onclick="showAuditDetail('${audit.id}')" style="background:#F9FAFB;border:1px dashed #9CA3AF;border-radius:10px;padding:12px 14px;margin-bottom:10px;cursor:pointer;"><div style="font-weight:600;font-size:15px;color:#4B5563;">🗑 Discarded — empty audit, nothing recorded</div><div style="font-size:12px;color:#6B7280;margin-top:4px;">Opened ${scanEsc(new Date(audit.opened_at || audit.created_at).toLocaleString())}${audit.device ? ' on ' + scanEsc(audit.device) : ''}</div></div>`;   // v4.5.12
                     if (audit.status === 'open') return `<div onclick="closeAuditHistoryModal(); openScanner('audit', 'wedge')" style="background:#ECFDF5;border:2px solid #16A34A;border-radius:10px;padding:12px 14px;margin-bottom:10px;cursor:pointer;"><div style="font-weight:700;font-size:15px;color:#14532D;">🟢 Open — opened ${scanEsc(new Date(audit.opened_at || audit.created_at).toLocaleString())}${audit.device ? ' on ' + scanEsc(audit.device) : ''}</div><div style="font-size:13px;color:#166534;margin-top:4px;">Tap to carry on scanning →</div></div>`;   // v4.5.11
                     return `<div onclick="showAuditDetail('${audit.id}')" style="background:white;border:1px solid #E5E7EB;border-radius:10px;padding:12px 14px;margin-bottom:10px;cursor:pointer;transition:box-shadow 0.15s;" onmouseover="this.style.boxShadow='0 2px 8px rgba(0,0,0,0.1)'" onmouseout="this.style.boxShadow='none'">
                         <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;">
@@ -4469,7 +4473,7 @@ async function registerToolVersion(client, toolKey, toolVersion) {
             const u = A.upload; if (u && !u.on && u.got) h += `<div class="scan-sum" style="background:${u.failed ? '#FEF2F2' : '#F0FDF4'}">Last upload: <b>${u.got}</b> received · <b>${u.saved}</b> saved${u.failed ? ` · <b style="color:#B91C1C">${u.failed} not saved — upload again</b>` : ''}</div>`;
             h += `<div class="scan-btns aud-tools"><button class="scan-mini" onclick="audUploadStart()">📦 Upload from scanner</button>` +
                  (audUploadSettled() ? `<button class="scan-mini" onclick="audCodeShow('clear')">🧹 Clear the scanner</button>` : '') +
-                 `<button class="scan-mini" onclick="audCodeShow('battery')">🔋 Battery</button></div>`;
+                 `<button class="scan-mini" onclick="audCodeShow('battery')">🔋 Battery</button><button class="scan-mini aud-close-top" id="audCloseTop" onclick="scanAuditFinish()">✓ Close the audit</button></div>`;   // v4.5.13 (Paul 20:52)
             if (A.unknown.size) h += `<div class="scan-h" style="color:#B91C1C">Tags not on record (${A.unknown.size}) — link each to its item so it counts</div>` +
                 [...A.unknown].map(n => `<button class="scan-bigred" data-tag="${scanEsc(n)}" onclick="scanAuditLink(this.dataset.tag)">🔗 Link tag ${scanEsc(n)} to an item</button>`).join('');
             if (over.length) h += `<div class="scan-h" style="color:#A16207">More stickers than the room count (${over.length})</div>` +
@@ -4533,7 +4537,8 @@ async function registerToolVersion(client, toolKey, toolVersion) {
                 if (e1) throw e1;
                 if (li && li.length) throw new Error('this audit already has item lines — it was closed on another phone. Open Audit History.');
                 const { data: upd, error: e2 } = await sbClient.from('tm_audits').update({ status: 'closed', closed_at: new Date().toISOString(),
-                    notes: 'Discarded on the phone: an empty audit (no scans) — nothing recorded' }).eq('id', A.id).eq('status', 'open').select('id');
+                    notes: 'Discarded on the phone: an empty audit (no scans) — nothing recorded',
+                    total_items_expected: null, total_items_found: null, total_items_partial: null, total_items_missing: null, total_items_removed: null, total_value_expected: null, total_value_found: null }).eq('id', A.id).eq('status', 'open').select('id');   // v4.5.13: the totals default to 0 on prod
                 if (e2) throw e2;
                 if (!upd || upd.length !== 1) throw new Error('the audit was not open any more — it was closed on another phone.');
                 logActivity('INVENTORY', 'ROOM_AUDIT_DISCARDED', ROOM, 'Crazy Chicks room audit discarded on the phone: empty (no scans), nothing recorded', { audit_id: A.id, opened_at: A.opened });
