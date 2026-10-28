@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
 ================================================================================
-CCD MOBILE INVENTORY MODULE v4.5.13-Supabase
+CCD MOBILE INVENTORY MODULE v4.5.14-Supabase
 FIX-W0 2026-10-04: DEPLOY THIS FILE AS index.html (the PWA, manifest and sw.js load ./index.html).
 ================================================================================
 Pure display terminal backed by Supabase. Desktop CCD-INVENTORY-SYSTEM.html
@@ -89,6 +89,9 @@ v4.5.12 (2026-10-21, S119): an EMPTY room audit cannot be closed as a real one �
       is refused and offers Discard (no item lines); with scans, the question is on the
       page with the NOT-FOUND count first, in red; ✕ Leave (audit stays open).
       Build notes: claude\CCD-S119-Build-Notes-Mobile-v4_5_12.md
+v4.5.14 (2026-10-28, S123): 📝 CC TO DO — the note under Comments (red while it holds a note), ✓ Done clears it at
+      once, red names with 📝 in every item list (audit lists too) and a CC To Do list from the home screen.
+      Build notes: claude\CCD-S123-Build-Notes-Mobile-v4_5_14.md
 v4.5.13 (2026-10-21, S119): a discarded audit reads "Discarded" in Audit History — its totals
       are written empty (they default to 0 on prod) and its note is recognised too; ✓ Close
       the audit also sits in the button row at the top (Paul 20:52).
@@ -432,6 +435,18 @@ v4.5.8 (2026-10-04, FIX-W1/W8): a sale dated after today is refused,
         .quick-btn { border: none; border-radius: 12px; padding: 10px 4px; font-size: 12px; font-weight: 600; color: white; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 4px; line-height: 1.1; }
         .quick-btn span:first-child { font-size: 20px; }
         .quick-btn:active { opacity: 0.8; }
+        /* v4.5.14: the CC To Do — home button, list rows, red names */
+        .cctodo-home-btn { display: block; width: calc(100% - 24px); margin: 8px 12px 0; padding: 10px; border-radius: 12px; border: 2px solid #CBD5E1; background: #F8FAFC; color: #64748B; font-size: 14px; font-weight: 700; cursor: pointer; }
+        .cctodo-home-btn.has-open { border-color: #DC2626; background: #DC2626; color: white; }
+        .cctodo-name { color: #DC2626 !important; }
+        .cctodo-under { font-size: 12px; color: #DC2626; font-weight: 600; margin-top: 2px; white-space: pre-wrap; }
+        .cctodo-row { border: 2px solid #FCA5A5; background: #FEF2F2; border-radius: 10px; padding: 10px; margin: 8px 12px; }
+        .cctodo-row-top { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; }
+        .cctodo-row-name { font-weight: 700; font-size: 14px; color: #DC2626; }
+        .cctodo-row-sku { font-size: 11px; color: #6B7280; }
+        .cctodo-row-note { font-size: 14px; color: #111827; margin: 6px 0; white-space: pre-wrap; }
+        .cctodo-row-btns { display: flex; gap: 8px; }
+        .cctodo-row-btns button { flex: 1; padding: 10px; border-radius: 8px; border: none; font-weight: 700; font-size: 14px; }
         .result-bar { display: none; margin: 8px 12px 0; padding: 10px 12px; border-radius: 10px; font-size: 13px; line-height: 1.35; align-items: flex-start; gap: 8px; background: #F0FDF4; border: 1px solid #A7F3D0; color: #065F46; }
         .result-bar.show { display: flex; }
         .result-bar.warning { background: #FFFBEB; border-color: #FCD34D; color: #92400E; }
@@ -628,6 +643,7 @@ v4.5.8 (2026-10-04, FIX-W1/W8): a sale dated after today is refused,
             <button class="quick-btn" style="background:#7C3AED;" onclick="showWriteoffs()"><span>📋</span><span>Write-offs</span></button>
             <button class="quick-btn" style="background:#475569;" onclick="showActivityLog()"><span>📜</span><span>Activity</span></button>
         </div>
+        <button class="cctodo-home-btn" id="ccTodoHomeBtn" onclick="showCcTodoList()">📝 CC To Do</button>   <!-- v4.5.14 -->
         <button class="scan-home-btn" id="scanHomeBtn" onclick="openScanner('find')">📷 Scan a Crazy Chicks tag</button>
         <div class="result-bar" id="resultBar"><span id="resultText"></span><button onclick="hideResult()" title="Dismiss">×</button></div>
 
@@ -715,6 +731,11 @@ v4.5.8 (2026-10-04, FIX-W1/W8): a sale dated after today is refused,
                     <button type="button" class="push-price-btn" id="pushPriceBtn" onclick="pushPricesToChannels()">💲 Push prices to Etsy &amp; Wix</button>
                 </div>
                 <div class="form-group"><label class="form-label">Comments</label><input type="text" class="form-input" id="editComments" placeholder="Add notes about this item..."></div>
+                <!-- v4.5.14 (S123): the Crazy Chicks to-do — red while it holds a note; ✓ Done clears it (no green, Mary 10-28) -->
+                <div class="form-group" id="ccTodoGroup"><label class="form-label">📝 CC To Do</label>
+                    <textarea class="form-input" id="editCcTodo" rows="2" placeholder="e.g. Change price tag · Verify count · Bring item home" oninput="ccTodoPaint()" style="resize:vertical;font-family:inherit;"></textarea>
+                    <div style="display:flex;align-items:center;gap:8px;margin-top:6px;"><div id="ccTodoLine" style="flex:1;font-size:12px;"></div>
+                    <button type="button" id="ccTodoDoneBtn" onclick="ccTodoMarkDone()" style="display:none;padding:8px 14px;border:none;border-radius:8px;background:#059669;color:white;font-weight:700;font-size:14px;">✓ Done</button></div></div>
 
                 <!-- Stored Financial Data (read-only, written by desktop) -->
                 <div class="financial-panel">
@@ -785,7 +806,7 @@ v4.5.8 (2026-10-04, FIX-W1/W8): a sale dated after today is refused,
                 </div>
                 <div class="settings-section">
                     <div class="settings-section-title">Version</div>
-                    <div class="settings-item"><div class="settings-item-label">App Version</div><div class="settings-item-value">v4.5.13 Supabase</div><!-- FIX-W0 2026-10-04 --></div>
+                    <div class="settings-item"><div class="settings-item-label">App Version</div><div class="settings-item-value">v4.5.14 Supabase</div><!-- FIX-W0 2026-10-04 --></div>
                 </div>
             </div>
         </div>
@@ -991,6 +1012,17 @@ v4.5.8 (2026-10-04, FIX-W1/W8): a sale dated after today is refused,
     </div>
 
     <!-- Write-Off Log Modal -->
+
+    <!-- v4.5.14 (S123): every item with an OPEN Crazy Chicks to-do -->
+    <div class="modal" id="ccTodoModal" onclick="if (event.target === event.currentTarget) closeCcTodoList()">
+        <div class="modal-content" style="max-width: 560px;">
+            <div class="modal-header" style="background: linear-gradient(135deg, #DC2626 0%, #991B1B 100%); color: white; border-radius: 16px 16px 0 0;">
+                <div class="modal-title" style="color: white;">📝 CC To Do</div>
+                <button class="modal-close" onclick="closeCcTodoList()" style="color: white;">×</button>
+            </div>
+            <div class="modal-body" style="padding: 0 0 12px;"><div id="ccTodoList"></div></div>
+        </div>
+    </div>
     <div class="modal" id="writeoffLogModal" onclick="closeWoLogOutside(event)">
         <div class="modal-content" style="max-width: 560px;">
             <div class="modal-header" style="background: linear-gradient(135deg, #7C3AED 0%, #5B21B6 100%); color: white; border-radius: 16px 16px 0 0;">
@@ -1073,7 +1105,7 @@ v4.5.8 (2026-10-04, FIX-W1/W8): a sale dated after today is refused,
 
     <script>
         // ============================================================================
-        // CCD MOBILE v4.5.13 — SUPABASE EDITION (TOOL_VERSION below)   // FIX-W0 2026-10-04
+        // CCD MOBILE v4.5.14 — SUPABASE EDITION (TOOL_VERSION below)   // FIX-W0 2026-10-04
         // Pure display terminal. Desktop is the calculation engine.
         // Mobile reads stored values. Mobile never calculates prices.
         // ============================================================================
@@ -1096,7 +1128,7 @@ v4.5.8 (2026-10-04, FIX-W1/W8): a sale dated after today is refused,
         // Crazy Chicks is a ROOM (Paul, S103). On screen it is "Crazy Chicks" or
         // "Chicks" — never "CC" (L-5).
         // ============================================================================
-        const TOOL_VERSION = '4.5.13';   // S119 (4.5.12 earlier the same evening)   // FIX-W0 2026-10-04: version bump (registered as settings.tool_versions.mobile)
+        const TOOL_VERSION = '4.5.14';   // S123 (4.5.13: S119)   // FIX-W0 2026-10-04: version bump (registered as settings.tool_versions.mobile)
         const DEVICE_LABEL = 'Mobile-v' + TOOL_VERSION;
         const ROOM = 'crazychicks';
         const ROOM_LABEL = 'Crazy Chicks';
@@ -1104,7 +1136,7 @@ v4.5.8 (2026-10-04, FIX-W1/W8): a sale dated after today is refused,
         const ONLINE_CHANNELS = ['etsy', 'wix', 'wayfair'];
         const CH_QTY_COL = { etsy: 'etsy_qty', wix: 'wix_qty', wayfair: 'wayfair_qty', treasuremarts: 'treasuremarts_qty', crazychicks: 'crazychicks_qty' };
         const CH_LABEL = { etsy: 'Etsy', wix: 'Wix', wayfair: 'Wayfair', treasuremarts: 'TreasureMarts', crazychicks: ROOM_LABEL };
-        const ITEM_COLS = 'id,sku,product_name,brand_name,comments,item_role,is_bundle,is_active,qty,etsy_qty,wix_qty,wayfair_qty,treasuremarts_qty,crazychicks_qty,etsy_listing_id,etsy_variant_id,wix_product_id,wix_variant_id,wayfair_sku,wholesale_price,ib_shipping,tariff,ob_shipping,etsy_price,wix_price,wayfair_price,crazychicks_price,hold_back,etsy_state';   // v4.5.9: + hold_back, etsy_state
+        const ITEM_COLS = 'id,sku,product_name,brand_name,comments,item_role,is_bundle,is_active,qty,etsy_qty,wix_qty,wayfair_qty,treasuremarts_qty,crazychicks_qty,etsy_listing_id,etsy_variant_id,wix_product_id,wix_variant_id,wayfair_sku,wholesale_price,ib_shipping,tariff,ob_shipping,etsy_price,wix_price,wayfair_price,crazychicks_price,hold_back,etsy_state,cc_todo,cc_todo_at,cc_todo_done_at,cc_todo_done_by';   // v4.5.9: + hold_back, etsy_state · v4.5.14: + the CC To Do (IT-01)
         // v4.4.2: the editable channel prices. push = the Etsy/Wix listing price can be sent
         // (edge buildPricePayload: Etsy updateListing, Wix updateProduct; Wayfair not supported).
         const PRICE_FIELDS = [
@@ -1811,6 +1843,10 @@ async function registerToolVersion(client, toolKey, toolVersion) {
                 vendor:      row.vendor       || '',
                 shelfNumber:   row.shelf_number   || '',
                 comments:    row.comments     || '',
+                ccTodo:       row.cc_todo || '',            // v4.5.14: the Crazy Chicks to-do (IT-01)
+                ccTodoAt:     row.cc_todo_at || null,
+                ccTodoDoneAt: row.cc_todo_done_at || null,
+                ccTodoDoneBy: row.cc_todo_done_by || null,
                 isActive:    row.is_active !== false,
                 isBundle:    row.is_bundle === true,  // v4.3 — needed for ECOSYSTEM-011 bundle skip
                 itemRole:    row.item_role || 'single',   // v4.4.0 — Sets/bundles are refused on the phone
@@ -1993,6 +2029,7 @@ async function registerToolVersion(client, toolKey, toolVersion) {
             result = sortInventory(result);
             filteredInventory = result;
             renderInventoryList();
+            ccTodoHome();   // v4.5.14
         }
 
         function renderInventoryList() {
@@ -2023,7 +2060,7 @@ async function registerToolVersion(client, toolKey, toolVersion) {
                 return `<div class="inventory-item" onclick="openItemModal('${item.id}')">
                     <div class="item-header">
                         <div>
-                            <div class="item-title">${item.productName || 'Unnamed'}</div>
+                            <div class="item-title">${ccTodoName(item, item.productName || 'Unnamed')}</div>
                             <div class="item-sku">SKU: ${item.sku || 'N/A'} | ${item.brandName || 'No Brand'}</div>
                         </div>
                         <div class="${qtyClass}">${wQty}</div>
@@ -2046,6 +2083,75 @@ async function registerToolVersion(client, toolKey, toolVersion) {
             }).join('');
         }
 
+
+        // ════════════════════════════════════════════════════════════════════
+        // v4.5.14 (S123, Paul + Mary 10-28): THE CRAZY CHICKS TO DO. items.cc_todo / _at / _done_at / _done_by (IT-01), written by
+        // V2 2.9.97's card and this card. A NOTE = OPEN → RED everywhere the phone lists the item. ✓ Done saves at once (a status
+        // change, T-1) and CLEARS the note — the box goes back to plain (no green: Mary, 10-28); cc_todo_done_at / _by keep the last one.
+        // ════════════════════════════════════════════════════════════════════
+        function ccTodoNorm(t) { return String(t == null ? '' : t).replace(/\r\n/g, '\n').trim(); }
+        function ccTodoOpen(it) { return !!(it && ccTodoNorm(it.ccTodo)); }
+        function ccTodoName(it, name) { const n = scanEsc(name); return ccTodoOpen(it) ? `<span class="cctodo-name" title="Open CC To Do">📝 ${n}</span>` : n; }
+        function ccTodoUnder(it) { return ccTodoOpen(it) ? `<div class="cctodo-under">📝 ${scanEsc(it.ccTodo)}</div>` : ''; }
+        function ccTodoDate(t) { try { const d = new Date(t); return isNaN(d) ? '' : d.toLocaleDateString('en-US'); } catch (e) { return ''; } }
+        function ccTodoPaint() {
+            const el = document.getElementById('editCcTodo'), line = document.getElementById('ccTodoLine'), btn = document.getElementById('ccTodoDoneBtn');
+            if (!el || !currentItem) return;
+            const typed = ccTodoNorm(el.value), saved = ccTodoNorm(currentItem.ccTodo);
+            let bd = '', bg = '', txt = '', showBtn = false;
+            if (typed && typed !== saved) { bd = '#DC2626'; bg = '#FEF2F2'; txt = '<span style="color:#DC2626;font-weight:700;">● Not saved yet</span> — Save makes it a new to-do'; }
+            else if (!typed && saved) { txt = '<span style="color:#6B7280;">Not saved yet — Save clears the to-do</span>'; }
+            else if (typed) { bd = '#DC2626'; bg = '#FEF2F2'; txt = '<span style="color:#DC2626;font-weight:700;">● Open</span> — ✓ Done clears it'; showBtn = true; }
+            else if (currentItem.ccTodoDoneAt) { txt = `<span style="color:#6B7280;">Last one done ${scanEsc(ccTodoDate(currentItem.ccTodoDoneAt))}${currentItem.ccTodoDoneBy ? ' · ' + scanEsc(currentItem.ccTodoDoneBy) : ''}</span>`; }
+            el.style.borderColor = bd; el.style.borderWidth = bd ? '2px' : ''; el.style.background = bg;
+            line.innerHTML = txt; btn.style.display = showBtn ? '' : 'none';
+        }
+        async function ccTodoMarkDone(itemId) {
+            if (!requireOnline()) return;
+            const fromCard = itemId == null;
+            const id = fromCard ? (currentItem && currentItem.id) : itemId;
+            const it = inventory.find(i => String(i.id) === String(id));
+            if (!it) return;
+            if (fromCard) { const el = document.getElementById('editCcTodo');
+                if (el && ccTodoNorm(el.value) !== ccTodoNorm(it.ccTodo)) { showToast('Save the changed note first — ✓ Done marks the saved note', 'error'); return; } }
+            let row; try { row = await fetchItemRow(it.id); } catch (e) { showResult('⚠️ ' + e.message + ' — not marked done.', 'error'); return; }
+            if (!ccTodoNorm(row.cc_todo)) { showToast('Already done — there is no CC To Do on this item now', 'success'); await refreshItem(it.id); ccTodoAfter(it.id); return; }
+            if (ccTodoNorm(row.cc_todo) !== ccTodoNorm(it.ccTodo)) { showResult('Not marked done — the note was changed elsewhere. Look at it again.', 'warning'); await refreshItem(it.id); ccTodoAfter(it.id); return; }
+            const { data, error } = await sbClient.from('items').update({ cc_todo: null, cc_todo_at: null, cc_todo_done_at: new Date().toISOString(), cc_todo_done_by: 'Mobile ' + TOOL_VERSION })
+                .eq('id', it.id).eq('cc_todo', row.cc_todo).select('id');
+            if (error) { showResult('⚠️ Not marked done: ' + error.message, 'error'); return; }
+            if (!data || !data.length) { showResult('Not marked done — the note changed meanwhile. Look at it again.', 'warning'); await refreshItem(it.id); ccTodoAfter(it.id); return; }
+            logActivity('INVENTORY', 'CC_TODO_DONE', 'crazychicks', `CC To Do done on ${it.sku}: ${row.cc_todo}`, { item_id: it.id, note: row.cc_todo }, it.sku);
+            await refreshItem(it.id); ccTodoAfter(it.id);
+            showToast('✓ Done — ' + it.sku + ' cleared', 'success');
+        }
+        function ccTodoAfter(id) {   // redraw what is on screen after a done
+            const fresh = inventory.find(i => String(i.id) === String(id));
+            if (fresh && currentItem && String(currentItem.id) === String(id) && document.getElementById('itemModal').classList.contains('active')) {
+                currentItem = fresh; const el = document.getElementById('editCcTodo'); if (el) el.value = fresh.ccTodo || ''; ccTodoPaint(); }
+            if (document.getElementById('ccTodoModal').classList.contains('active')) renderCcTodoList();
+            if (document.getElementById('treasureMartModal')?.classList.contains('active')) showRoomAudit(true);
+            ccTodoHome();
+        }
+        function ccTodoHome() {
+            const b = document.getElementById('ccTodoHomeBtn'); if (!b) return;
+            const n = inventory.filter(ccTodoOpen).length;
+            b.textContent = n ? `📝 CC To Do · ${n} open` : '📝 CC To Do · none open';
+            b.classList.toggle('has-open', n > 0);
+        }
+        function showCcTodoList() { document.getElementById('ccTodoModal').classList.add('active'); renderCcTodoList(); }
+        function closeCcTodoList() { document.getElementById('ccTodoModal').classList.remove('active'); }
+        function renderCcTodoList() {
+            const rows = inventory.filter(ccTodoOpen).sort((a, b) => (a.brandName || 'ZZZ').localeCompare(b.brandName || 'ZZZ') || (a.productName || '').localeCompare(b.productName || ''));
+            document.getElementById('ccTodoList').innerHTML = rows.length
+                ? `<div style="padding:10px 14px;font-size:13px;color:#6B7280;">${rows.length} open — tap ✓ Done when it is finished.</div>` + rows.map(it => `<div class="cctodo-row" data-id="${scanEsc(it.id)}">
+                    <div class="cctodo-row-top"><div><div class="cctodo-row-name">📝 ${scanEsc(it.productName || 'Unnamed')}</div><div class="cctodo-row-sku">SKU ${scanEsc(it.sku)} · ${(it.channels && it.channels.crazychicks) || 0} in the Crazy Chicks room</div></div></div>
+                    <div class="cctodo-row-note">${scanEsc(it.ccTodo)}</div>
+                    <div class="cctodo-row-btns"><button class="cctodo-done" style="background:#059669;color:white;" onclick="ccTodoMarkDone('${scanEsc(it.id)}')">✓ Done</button>
+                    <button style="background:#E5E7EB;color:#111827;" onclick="closeCcTodoList(); openItemModal('${scanEsc(it.id)}')">Open item</button></div></div>`).join('')
+                : '<div style="padding:30px;text-align:center;color:#6B7280;">No open Crazy Chicks to-dos. 🎉</div>';
+        }
+        // ═══ end v4.5.14 ═══
         function updateStats() {
             document.getElementById('statTotalItems').textContent = inventory.length;
             document.getElementById('statTotalQty').textContent   = inventory.reduce((sum, i) => sum + getTotalQty(i), 0);
@@ -2066,6 +2172,8 @@ async function registerToolVersion(client, toolKey, toolVersion) {
             document.getElementById('editBrand').value        = currentItem.brandName   || '';
             document.getElementById('editQty').value          = parseInt(currentItem.qty) || 0;
             document.getElementById('editComments').value     = currentItem.comments    || '';
+            document.getElementById('editCcTodo').value       = currentItem.ccTodo      || '';   // v4.5.14
+            ccTodoPaint();
 
             // Read-only financial inputs — display only
             const ws = currentItem.wholesalePrice;
@@ -2179,6 +2287,11 @@ async function registerToolVersion(client, toolKey, toolVersion) {
             if (text.product_name !== (before.product_name || '')) updates.product_name = text.product_name;
             if (text.brand_name   !== (before.brand_name   || '')) updates.brand_name   = text.brand_name;
             if (text.comments     !== (before.comments     || '')) updates.comments     = text.comments;
+            // v4.5.14: the CC To Do — written only when SHE changed the text on this card (compared with what the card loaded, NOT with
+            // the fresh row): a ✓ Done made elsewhere while this card was open cleared the note in the database, and comparing with the
+            // fresh row would write the old note back (found by D06).
+            { const t = ccTodoNorm(document.getElementById('editCcTodo').value);
+              if (t !== ccTodoNorm(currentItem && currentItem.ccTodo)) Object.assign(updates, { cc_todo: t || null, cc_todo_at: t ? new Date().toISOString() : null }); }
 
             if (!isComposite(before)) {
                 const want = {
@@ -2658,7 +2771,7 @@ async function registerToolVersion(client, toolKey, toolVersion) {
                     </div>
                     <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:8px;">
                         <div style="flex:1;"><div style="font-size:11px;color:#6B7280;font-weight:500;">${item.brandName||'No Brand'}</div>
-                        <div style="font-weight:600;font-size:14px;${st==='missing'?'text-decoration:line-through;color:#DC2626;':''}">${item.productName||'Unnamed'}</div>
+                        <div style="font-weight:600;font-size:14px;${st==='missing'?'text-decoration:line-through;color:#DC2626;':''}">${ccTodoName(item, item.productName||'Unnamed')}</div>${ccTodoUnder(item)}
                         <div style="font-size:11px;color:#6B7280;">SKU: ${item.sku||'N/A'}</div></div>
                         <div style="text-align:right;"><div style="font-weight:700;font-size:16px;color:${c.tx};">${priceDisplay}</div>
                         <div style="font-size:12px;color:#6B7280;">×${eQ} = ${valueDisplay}</div></div>
@@ -4088,7 +4201,7 @@ async function registerToolVersion(client, toolKey, toolVersion) {
             const room = item ? (item.channels?.crazychicks || 0) : null;
             const when = t.status_changed_at ? ' on ' + new Date(t.status_changed_at).toLocaleDateString() : '';
             let h = `<div class="scan-card"><div class="scan-card-top"><span class="scan-tag">Tag ${scanEsc(tagNo)}</span><span class="scan-price">$${Number(t.tag_price).toFixed(2)}</span></div>
-                <div class="scan-name">${scanEsc(item ? item.productName : t.sku)}</div>
+                <div class="scan-name">${item ? ccTodoName(item, item.productName || '') : scanEsc(t.sku)}</div>${item ? ccTodoUnder(item) : ''}
                 <div class="scan-sub">SKU ${scanEsc(t.sku)}${room != null ? ' · ' + room + ' in the Crazy Chicks room' : ''}${t.link_method === 'phone_scan' ? ' · linked by scan' : t.printed_on ? ' · printed ' + scanEsc(t.printed_on) : ''}</div>
                 ${t.name_on_tag ? `<div class="scan-sub" id="scanTagName">On the tag: “${scanEsc(t.name_on_tag)}”</div>` : ''}</div>`;
             if (!t.name_on_tag && t.status === 'in_room') {   // v4.5.4: add the name printed on the tag
@@ -4463,7 +4576,7 @@ async function registerToolVersion(client, toolKey, toolVersion) {
             const g = inRoom.filter(r => r.scanned >= r.room), y = inRoom.filter(r => r.scanned > 0 && r.scanned < r.room), red = inRoom.filter(r => r.scanned === 0);
             const over = rows.filter(r => r.scanned > r.room);
             const offShelf = [...A.scanned].map(n => A.byTag.get(n)).filter(t => t && t.status !== 'in_room');
-            const nm = it => `<b>${scanEsc(it.sku)}</b> · ${scanEsc(it.productName || '')}`;
+            const nm = it => `<b>${scanEsc(it.sku)}</b> · ${ccTodoName(it, it.productName || '')}${ccTodoUnder(it)}`;   // v4.5.14
             const hd = audHeardText(), op = A.opened ? new Date(A.opened) : null;
             let h = `<div class="aud-heard ${hd.cls}" id="audHeard">${scanEsc(hd.t)}</div>`;
             if (audWake.refused) h += `<div class="scan-note" style="color:#A16207">The screen may go to sleep on this phone — tap it now and then. Every scan is already saved.</div>`;
@@ -4513,7 +4626,7 @@ async function registerToolVersion(client, toolKey, toolVersion) {
             }
             const rows = scanAuditCounts().filter(r => r.room > 0);
             const red = rows.filter(r => r.scanned === 0), y = rows.filter(r => r.scanned > 0 && r.scanned < r.room), g = rows.filter(r => r.scanned >= r.room);
-            const nm = r => `<b>${scanEsc(r.it.sku)}</b> · ${scanEsc(r.it.productName || '')}`;
+            const nm = r => `<b>${scanEsc(r.it.sku)}</b> · ${ccTodoName(r.it, r.it.productName || '')}`;   // v4.5.14
             scanPanel(`<div class="aud-ask" id="audAsk">
                 <div class="aud-ask-red" id="audAskRed">${red.length} item(s) will be recorded NOT FOUND</div>
                 ${red.length ? `<div class="aud-ask-list">${red.slice(0, 12).map(nm).join('<br>')}${red.length > 12 ? `<br>… and ${red.length - 12} more` : ''}</div>` : ''}
