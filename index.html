@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
 ================================================================================
-CCD MOBILE INVENTORY MODULE v4.5.14-Supabase
+CCD MOBILE INVENTORY MODULE v4.5.15-Supabase
 FIX-W0 2026-10-04: DEPLOY THIS FILE AS index.html (the PWA, manifest and sw.js load ./index.html).
 ================================================================================
 Pure display terminal backed by Supabase. Desktop CCD-INVENTORY-SYSTEM.html
@@ -89,6 +89,8 @@ v4.5.12 (2026-10-21, S119): an EMPTY room audit cannot be closed as a real one �
       is refused and offers Discard (no item lines); with scans, the question is on the
       page with the NOT-FOUND count first, in red; ✕ Leave (audit stays open).
       Build notes: claude\CCD-S119-Build-Notes-Mobile-v4_5_12.md
+v4.5.15 (2026-11-09, S134): THE ROOM AUDIT — Save refuses while any item in the room is not marked (Paul: "We tap every item"); an unmarked item is no longer recorded as Found.
+  After a save the audit screen closes. A double tap saves once. On 11-08 a second press of Save recorded a 460-of-460 audit that nobody counted.
 v4.5.14 (2026-10-28, S123): 📝 CC TO DO — the note under Comments (red while it holds a note), ✓ Done clears it at
       once, red names with 📝 in every item list (audit lists too) and a CC To Do list from the home screen.
       Build notes: claude\CCD-S123-Build-Notes-Mobile-v4_5_14.md
@@ -806,7 +808,7 @@ v4.5.8 (2026-10-04, FIX-W1/W8): a sale dated after today is refused,
                 </div>
                 <div class="settings-section">
                     <div class="settings-section-title">Version</div>
-                    <div class="settings-item"><div class="settings-item-label">App Version</div><div class="settings-item-value">v4.5.14 Supabase</div><!-- FIX-W0 2026-10-04 --></div>
+                    <div class="settings-item"><div class="settings-item-label">App Version</div><div class="settings-item-value">v4.5.15 Supabase</div><!-- FIX-W0 2026-10-04 --></div>
                 </div>
             </div>
         </div>
@@ -1105,7 +1107,7 @@ v4.5.8 (2026-10-04, FIX-W1/W8): a sale dated after today is refused,
 
     <script>
         // ============================================================================
-        // CCD MOBILE v4.5.14 — SUPABASE EDITION (TOOL_VERSION below)   // FIX-W0 2026-10-04
+        // CCD MOBILE v4.5.15 — SUPABASE EDITION (TOOL_VERSION below)   // FIX-W0 2026-10-04
         // Pure display terminal. Desktop is the calculation engine.
         // Mobile reads stored values. Mobile never calculates prices.
         // ============================================================================
@@ -1128,7 +1130,7 @@ v4.5.8 (2026-10-04, FIX-W1/W8): a sale dated after today is refused,
         // Crazy Chicks is a ROOM (Paul, S103). On screen it is "Crazy Chicks" or
         // "Chicks" — never "CC" (L-5).
         // ============================================================================
-        const TOOL_VERSION = '4.5.14';   // S123 (4.5.13: S119)   // FIX-W0 2026-10-04: version bump (registered as settings.tool_versions.mobile)
+        const TOOL_VERSION = '4.5.15';   // S134 (4.5.14: S123)   // FIX-W0 2026-10-04: version bump (registered as settings.tool_versions.mobile)
         const DEVICE_LABEL = 'Mobile-v' + TOOL_VERSION;
         const ROOM = 'crazychicks';
         const ROOM_LABEL = 'Crazy Chicks';
@@ -2918,7 +2920,23 @@ async function registerToolVersion(client, toolKey, toolVersion) {
         //              week's sales are in, each still-missing item is written off deliberately,
         //              one tap each, from Audit History (writeOffAuditItem).
         // Every item is re-read by id first; one failure does not stop the others.
+        // v4.5.15 (S134): every item in the room must be marked before an audit can be saved.
+        let roomAuditSaving = false;
+        function roomAuditNotMarked() {
+            return inventory.filter(i => (i.channels?.crazychicks || 0) > 0).filter(i => { const a = treasureMartAudit[i.id]; return !a || typeof a !== 'object' || !a.status || a.status === 'unchecked'; });
+        }
         async function saveTreasureMartAudit() {
+            if (roomAuditSaving) return;
+            const left = roomAuditNotMarked(), inRoom = inventory.filter(i => (i.channels?.crazychicks || 0) > 0).length;
+            if (left.length) {
+                if (left.length === inRoom) alert('Nothing has been marked, so nothing was saved.');
+                else alert(`Not saved: ${left.length} item(s) are not marked yet (${left.slice(0, 5).map(i => i.sku).join(', ')}${left.length > 5 ? ' and more' : ''}). Mark each one Found, Partial, Missing or Removed, then save.`);
+                return;
+            }
+            roomAuditSaving = true;
+            try { await saveRoomAuditMarked(); } finally { roomAuditSaving = false; }
+        }
+        async function saveRoomAuditMarked() {
             if (!requireOnline()) return;
             const changes = [];
             let totalMissing = 0, totalPartial = 0, totalRemoved = 0;
@@ -2937,6 +2955,7 @@ async function registerToolVersion(client, toolKey, toolVersion) {
                 if (!confirm('Everything was found. Save this audit to the history?')) return;
                 await saveAuditToSupabase(auditSnapshot, expectedById);
                 treasureMartAudit = {}; saveTreasureMartAuditState(); try { localStorage.removeItem('ccd_room_scan_tags'); } catch (e) {}
+                closeTreasureMartModal();   // v4.5.15
                 showResult('✅ Audit saved — everything found.', 'success');
                 return;
             }
@@ -2968,7 +2987,7 @@ async function registerToolVersion(client, toolKey, toolVersion) {
             const nfText = nf ? ` · ${nf} unit(s) not found — enter this week's Crazy Chicks sales, then write off what is still missing from 📋 History.` : '';
             if (failed.length) showResult(`⚠️ Audit saved: ${done.length} changed, ${failed.length} NOT changed — ${failed.join(' · ')}${nfText}`, 'warning');
             else showResult(`✅ Audit saved: ${done.length} item(s) updated${nfText}`, nf ? 'warning' : 'success');
-            showRoomAudit(true);
+            closeTreasureMartModal();   // v4.5.15: the audit is finished; leaving stops a second Save
         }
 
         // v4.4.0 (S103, option A): write off ONE not-found audit row, deliberately, after the
